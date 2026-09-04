@@ -1,0 +1,2245 @@
+import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode } from 'react';
+import {
+  Product,
+  WarehousePosition,
+  InventoryRecord,
+  ProductStockPosition,
+  FilterState,
+  ViewMode,
+  ActiveTab,
+  Inspection,
+  KonSarRelation,
+  TermMerodRelation,
+  BeepuloRelation,
+  FejSaruRelation,
+  SaruSpec,
+  KanbanItem,
+  KanbanStatus,
+} from '../types';
+import { INITIAL_PRODUCTS } from '../data/initialProducts';
+import { INITIAL_POSITIONS } from '../data/initialPositions';
+import { INITIAL_INVENTORY } from '../data/initialInventory';
+import { INITIAL_INSPECTIONS } from '../data/initialInspections';
+import { INITIAL_KANBAN } from '../data/initialKanban';
+import { INITIAL_KONSAR } from '../data/initialKonSar';
+import { INITIAL_TERMMEROD } from '../data/initialTermMerod';
+import { INITIAL_BEEPULO } from '../data/initialBeepulo';
+import { INITIAL_FEJSARU } from '../data/initialFejSaru';
+import { INITIAL_SARU_SPECS } from '../data/initialSaruSpecs';
+import {
+  getBaseProductId,
+  getNewProductId,
+  getUsedProductId,
+  isUsedProductId,
+  getProductConditionInfo,
+  calculateProductStockBreakdown,
+  getUnifiedProductPositions,
+  unifyProductList,
+  ProductStockBreakdown,
+  UnifiedProductPosition,
+} from '../utils/productUtils';
+import {
+  DEFAULT_GOOGLE_SHEET_URL,
+  fetchProductsFromGoogleSheet,
+  fetchPositionsFromGoogleSheet,
+  fetchInventoryFromGoogleSheet,
+  fetchInspectionsFromGoogleSheet,
+  fetchKanbanFromGoogleSheet,
+  fetchKonSarFromGoogleSheet,
+  fetchTermMerodFromGoogleSheet,
+  fetchBeepuloFromGoogleSheet,
+  fetchFejSaruFromGoogleSheet,
+  fetchSaruSpecsFromGoogleSheet,
+  parseProductsCsv,
+  parsePositionsCsv,
+  parseInventoryCsv,
+  parseInspectionsCsv,
+  parseKanbanCsv,
+  parseKonSarCsv,
+  parseTermMerodCsv,
+  parseBeepuloCsv,
+  parseFejSaruCsv,
+  parseSaruSpecsCsv,
+  exportProductsToCsv,
+  exportPositionsToCsv,
+  exportInventoryToCsv,
+  exportInspectionsToCsv,
+  exportKanbanToCsv,
+  exportKonSarToCsv,
+  exportTermMerodToCsv,
+  exportBeepuloToCsv,
+  exportFejSaruToCsv,
+  exportSaruSpecsToCsv,
+} from '../services/sheetsService';
+
+export interface PositionProductItem {
+  product: Product;
+  quantity: number;
+  newQuantity: number;
+  usedQuantity: number;
+  condition: 'new' | 'used' | 'both';
+  isUsed: boolean;
+  conditionLabel: string;
+  specificId: string;
+  baseId: string;
+}
+
+interface ProductContextType {
+  products: Product[];
+  rawProducts: Product[];
+  filteredProducts: Product[];
+  selectedProduct: Product | null;
+  selectedProductId: string | null;
+  activeTab: ActiveTab;
+  viewMode: ViewMode;
+  filters: FilterState;
+  isSyncing: boolean;
+  syncError: string | null;
+  lastSyncedAt: string | null;
+  sheetUrl: string;
+  totalCount: number;
+  categories: string[];
+  manufacturers: string[];
+  partTypes: string[];
+  insulationTypes: string[];
+  locations: string[];
+
+  // Positions and Inventory state
+  positions: WarehousePosition[];
+  inventory: InventoryRecord[];
+  transactions: InventoryRecord[];
+  selectedPositionId: string | null;
+
+  // Inspections (Karbantartás) state
+  inspections: Inspection[];
+  selectedInspectionId: string | null;
+
+  // Kanban tábla (4 oszlop: Terv, Folyamatban, Teszt, Befejezve) state
+  kanban: KanbanItem[];
+  selectedKanbanId: string | null;
+  setSelectedKanbanId: (id: string | null) => void;
+
+  // KonSar (Konnektor - Saru kapcsolatok) state
+  konSar: KonSarRelation[];
+  selectedKonSarId: string | null;
+  setSelectedKonSarId: (id: string | null) => void;
+
+  // TermMerod (Termék - Mérődoboz kapcsolatok) state
+  termMerod: TermMerodRelation[];
+  selectedTermMerodId: string | null;
+  setSelectedTermMerodId: (id: string | null) => void;
+
+  // Beépülő Alkatrész state
+  beepulo: BeepuloRelation[];
+  selectedBeepuloId: string | null;
+  setSelectedBeepuloId: (id: string | null) => void;
+
+  // FejSaru (Saruzófej - Saru kapcsolatok) state
+  fejSaru: FejSaruRelation[];
+  selectedFejSaruId: string | null;
+  setSelectedFejSaruId: (id: string | null) => void;
+
+  // Saru Segédtáblázat (Saru Keresztmetszet Mátrix 0.25..6.00 mm²) state
+  saruSpecs: SaruSpec[];
+  selectedSaruSpecId: string | null;
+  setSelectedSaruSpecId: (id: string | null) => void;
+  getSaruSpecForProduct: (productOrId: Product | string) => SaruSpec | undefined;
+  getAllSaruSpecsForProduct: (productOrId: Product | string) => SaruSpec[];
+
+  // Stock and Position calculation helpers
+  getProductTotalStock: (productId: string) => number;
+  getProductNewStock: (productId: string) => number;
+  getProductUsedStock: (productId: string) => number;
+  getProductStockBreakdown: (productId: string) => ProductStockBreakdown;
+  getProductPositions: (productId: string) => ProductStockPosition[];
+  getUnifiedPositions: (productId: string) => UnifiedProductPosition[];
+  getPositionProducts: (positionId: string) => PositionProductItem[];
+  getPositionTotalItems: (positionId: string) => number;
+  getNextTransactionId: () => string;
+
+  // Inspection calculation helpers
+  getProductInspections: (productId: string) => Inspection[];
+  getProductAsReplacedItemInspections: (productId: string) => Inspection[];
+  getNextInspectionId: () => string;
+
+  // KonSar calculation helpers
+  getConnectedKonSar: (productId: string) => {
+    relation: KonSarRelation;
+    partnerId: string;
+    partnerProduct?: Product;
+    partnerType: 'Konnektor' | 'Saru' | 'Egyéb';
+    partnerCategory?: string;
+  }[];
+  getNextKonSarId: () => string;
+
+  // TermMerod calculation helpers
+  getConnectedTermMerod: (productId: string) => {
+    relation: TermMerodRelation;
+    partnerId: string;
+    partnerProduct?: Product;
+    role: 'Termék' | 'Mérődoboz' | 'Egyéb';
+    partnerCategory?: string;
+  }[];
+  getNextTermMerodId: () => string;
+
+  // Beépülő Alkatrész calculation helpers
+  getConnectedBeepulo: (productId: string) => {
+    relation: BeepuloRelation;
+    partnerId: string;
+    partnerProduct?: Product;
+    role: 'Beépülő alkatrész' | 'Főtermék amibe beépül';
+    quantity: number;
+    note?: string;
+    partnerCategory?: string;
+  }[];
+  getNextBeepuloId: () => string;
+
+  // FejSaru calculation helpers
+  getConnectedFejSaru: (productId: string) => {
+    relation: FejSaruRelation;
+    partnerId: string;
+    partnerProduct?: Product;
+    role: 'Saruzófej' | 'Saru' | 'Egyéb';
+    note?: string;
+    partnerCategory?: string;
+  }[];
+  getNextFejSaruId: () => string;
+
+  // Actions
+  setActiveTab: (tab: ActiveTab) => void;
+  setViewMode: (mode: ViewMode) => void;
+  selectProductById: (id: string) => void;
+  clearSelectedProduct: () => void;
+  setSelectedPositionId: (id: string | null) => void;
+  selectPositionById: (positionIdOrName: string) => void;
+  clearSelectedPosition: () => void;
+  setSelectedInspectionId: (id: string | null) => void;
+  setFilters: React.Dispatch<React.SetStateAction<FilterState>>;
+  updateFilter: <K extends keyof FilterState>(key: K, value: FilterState[K]) => void;
+  toggleFilterItem: (
+    key: 'categories' | 'manufacturers' | 'partTypes' | 'insulationTypes' | 'locations',
+    value: string
+  ) => void;
+  setFilterItems: (
+    key: 'categories' | 'manufacturers' | 'partTypes' | 'insulationTypes' | 'locations',
+    values: string[]
+  ) => void;
+  clearFilterKey: (key: string) => void;
+  filterByValue: (
+    key: 'category' | 'manufacturer' | 'partType' | 'insulationType' | 'location',
+    value: string
+  ) => void;
+  resetFilters: () => void;
+
+  // Sync & Export
+  syncWithGoogleSheet: (customUrl?: string) => Promise<void>;
+  importCsvText: (csvText: string) => number;
+  importPositionsCsvText: (csvText: string) => number;
+  importInventoryCsvText: (csvText: string) => number;
+  importInspectionsCsvText: (csvText: string) => number;
+  importKanbanCsvText: (csvText: string) => number;
+  importKonSarCsvText: (csvText: string) => number;
+  importTermMerodCsvText: (csvText: string) => number;
+  importBeepuloCsvText: (csvText: string) => number;
+  importFejSaruCsvText: (csvText: string) => number;
+  importSaruSpecsCsvText: (csvText: string) => number;
+  exportCsv: () => string;
+  exportPositionsCsv: () => string;
+  exportInventoryCsv: () => string;
+  exportInspectionsCsv: () => string;
+  exportKanbanCsv: () => string;
+  exportKonSarCsv: () => string;
+  exportTermMerodCsv: () => string;
+  exportBeepuloCsv: () => string;
+  exportFejSaruCsv: () => string;
+  exportSaruSpecsCsv: () => string;
+
+  // Products CRUD
+  addProduct: (product: Product) => void;
+  updateProduct: (id: string, product: Partial<Product>) => void;
+  deleteProduct: (id: string) => void;
+  setSheetUrl: (url: string) => void;
+
+  // Positions CRUD
+  addPosition: (position: WarehousePosition) => void;
+  updatePosition: (id: string, position: Partial<WarehousePosition>) => void;
+  deletePosition: (id: string) => void;
+
+  // Inventory Transactions CRUD & Stock movements
+  addInventoryRecord: (record: InventoryRecord) => void;
+  updateInventoryRecord: (id: string, record: Partial<InventoryRecord>) => void;
+  deleteInventoryRecord: (id: string) => void;
+  adjustStock: (
+    productId: string,
+    positionId: string,
+    deltaQuantity: number,
+    note?: string,
+    customDate?: string,
+    customTrxId?: string,
+    condition?: 'new' | 'used'
+  ) => void;
+  recordTransaction: (params: {
+    id?: string;
+    productId: string;
+    positionId: string;
+    quantity: number;
+    date?: string;
+    note?: string;
+    condition?: 'new' | 'used';
+  }) => InventoryRecord;
+
+  // Inspections CRUD
+  addInspection: (inspection: Inspection) => void;
+  updateInspection: (id: string, inspection: Partial<Inspection>) => void;
+  deleteInspection: (id: string) => void;
+
+  // Kanban CRUD & Helpers
+  addKanbanItem: (item: KanbanItem) => void;
+  updateKanbanItem: (id: string, item: Partial<KanbanItem>) => void;
+  deleteKanbanItem: (id: string) => void;
+  moveKanbanItem: (id: string, newStatus: KanbanStatus | string) => void;
+  clearKanban: () => void;
+  getNextKanbanId: () => string;
+
+  // KonSar CRUD
+  addKonSarRelation: (relation: KonSarRelation) => void;
+  deleteKonSarRelation: (id: string) => void;
+
+  // TermMerod CRUD
+  addTermMerodRelation: (relation: TermMerodRelation) => void;
+  deleteTermMerodRelation: (id: string) => void;
+
+  // Beépülő Alkatrész CRUD
+  addBeepuloRelation: (relation: BeepuloRelation) => void;
+  deleteBeepuloRelation: (id: string) => void;
+
+  // FejSaru CRUD
+  addFejSaruRelation: (relation: FejSaruRelation) => void;
+  deleteFejSaruRelation: (id: string) => void;
+}
+
+const STORAGE_KEY = 'kinetic_products_cache';
+const POSITIONS_STORAGE_KEY = 'kinetic_positions_cache';
+const INVENTORY_STORAGE_KEY = 'kinetic_inventory_cache';
+const INSPECTIONS_STORAGE_KEY = 'kinetic_inspections_cache';
+const KANBAN_STORAGE_KEY = 'kinetic_kanban_cache_v2';
+const KONSAR_STORAGE_KEY = 'kinetic_konsar_cache';
+const TERMMEROD_STORAGE_KEY = 'kinetic_termmerod_cache';
+const BEEPULO_STORAGE_KEY = 'kinetic_beepulo_cache';
+const FEJSARU_STORAGE_KEY = 'kinetic_fejsaru_cache';
+const SARU_SPECS_STORAGE_KEY = 'kinetic_saruspecs_cache_v8';
+const SYNC_TIME_KEY = 'kinetic_last_sync_time';
+const SHEET_URL_KEY = 'kinetic_sheet_url';
+
+const initialFilters: FilterState = {
+  searchQuery: '',
+  category: '',
+  categories: [],
+  manufacturer: '',
+  manufacturers: [],
+  partType: '',
+  partTypes: [],
+  insulationType: '',
+  insulationTypes: [],
+  insulationGripperType: '',
+  quality: '',
+  location: '',
+  locations: [],
+  hasImageOnly: false,
+  sortBy: 'id',
+  sortOrder: 'asc',
+};
+
+const ProductContext = createContext<ProductContextType | undefined>(undefined);
+
+export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  // Raw Products state
+  const [rawProducts, setRawProducts] = useState<Product[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return INITIAL_PRODUCTS;
+  });
+
+  const setProducts = (newProds: Product[] | ((prev: Product[]) => Product[])) => {
+    setRawProducts(newProds);
+  };
+
+  // Positions state
+  const [positions, setPositions] = useState<WarehousePosition[]>(() => {
+    try {
+      const saved = localStorage.getItem(POSITIONS_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return INITIAL_POSITIONS;
+  });
+
+  // Inventory records state
+  const [inventory, setInventory] = useState<InventoryRecord[]>(() => {
+    try {
+      const saved = localStorage.getItem(INVENTORY_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return INITIAL_INVENTORY;
+  });
+
+  // Inspections state (Karbantartás)
+  const [inspections, setInspections] = useState<Inspection[]>(() => {
+    try {
+      const saved = localStorage.getItem(INSPECTIONS_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return INITIAL_INSPECTIONS;
+  });
+
+  // Kanban state (4 oszlop: Terv, Folyamatban, Teszt, Befejezve)
+  const [kanban, setKanban] = useState<KanbanItem[]>(() => {
+    try {
+      localStorage.removeItem('kinetic_kanban_cache');
+      const saved = localStorage.getItem(KANBAN_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return INITIAL_KANBAN;
+  });
+
+  // KonSar state (Konnektor - Saru kapcsolatok)
+  const [konSar, setKonSar] = useState<KonSarRelation[]>(() => {
+    try {
+      const saved = localStorage.getItem(KONSAR_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return INITIAL_KONSAR;
+  });
+
+  // TermMerod state (Termék - Mérődoboz kapcsolatok)
+  const [termMerod, setTermMerod] = useState<TermMerodRelation[]>(() => {
+    try {
+      const saved = localStorage.getItem(TERMMEROD_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return INITIAL_TERMMEROD;
+  });
+
+  // Beépülő Alkatrész state
+  const [beepulo, setBeepulo] = useState<BeepuloRelation[]>(() => {
+    try {
+      const saved = localStorage.getItem(BEEPULO_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return INITIAL_BEEPULO;
+  });
+
+  // FejSaru state
+  const [fejSaru, setFejSaru] = useState<FejSaruRelation[]>(() => {
+    try {
+      const saved = localStorage.getItem(FEJSARU_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return INITIAL_FEJSARU;
+  });
+
+  // Saru Segédtáblázat (Saru Specs) state
+  const [saruSpecs, setSaruSpecs] = useState<SaruSpec[]>(() => {
+    try {
+      const saved = localStorage.getItem(SARU_SPECS_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length >= 400) {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return INITIAL_SARU_SPECS;
+  });
+
+  // Unified canonical products list with Saru auto-inclusion
+  const products = useMemo(() => {
+    const unified = unifyProductList(rawProducts);
+    const existingIds = new Set(unified.map((p) => p.id.toLowerCase()));
+
+    // Auto-create product entries for Saruk referenced in saruSpecs
+    const saruProducts: Product[] = [];
+    saruSpecs.forEach((spec) => {
+      const celKod = (spec.productId || '').trim();
+      const factoryCode = (spec.factoryCode || '').trim();
+      const id = celKod || factoryCode;
+      if (!id) return;
+
+      const idLower = id.toLowerCase();
+      if (!existingIds.has(idLower)) {
+        existingIds.add(idLower);
+        saruProducts.push({
+          id,
+          name: celKod ? `Saru (${celKod})` : `Saru (${factoryCode})`,
+          category: 'Saru',
+          factoryCode: factoryCode || undefined,
+          location: spec.saruLocation || undefined,
+          description: spec.note || (spec.feederTool ? `Saruzófej: ${spec.feederTool}` : undefined),
+        });
+      }
+    });
+
+    return [...unified, ...saruProducts];
+  }, [rawProducts, saruSpecs]);
+
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
+  const [selectedPositionId, setSelectedPositionId] = useState<string | null>(null);
+  const [selectedInspectionId, setSelectedInspectionId] = useState<string | null>(null);
+  const [selectedKanbanId, setSelectedKanbanId] = useState<string | null>(null);
+  const [selectedKonSarId, setSelectedKonSarId] = useState<string | null>(null);
+  const [selectedTermMerodId, setSelectedTermMerodId] = useState<string | null>(null);
+  const [selectedBeepuloId, setSelectedBeepuloId] = useState<string | null>(null);
+  const [selectedFejSaruId, setSelectedFejSaruId] = useState<string | null>(null);
+  const [selectedSaruSpecId, setSelectedSaruSpecId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<ActiveTab>('inventory');
+  const [viewMode, setViewMode] = useState<ViewMode>('table');
+  const [filters, setFilters] = useState<FilterState>(initialFilters);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(() => {
+    return localStorage.getItem(SYNC_TIME_KEY) || null;
+  });
+  const [sheetUrl, setSheetUrlState] = useState<string>(() => {
+    return localStorage.getItem(SHEET_URL_KEY) || DEFAULT_GOOGLE_SHEET_URL;
+  });
+
+  const setSheetUrl = (url: string) => {
+    setSheetUrlState(url);
+    localStorage.setItem(SHEET_URL_KEY, url);
+  };
+
+  // Save to local storage whenever products, positions, inventory, inspections, konSar, termMerod, beepulo, or fejSaru change
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(rawProducts));
+    } catch (e) {
+      console.warn('LocalStorage save error (products):', e);
+    }
+  }, [rawProducts]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(POSITIONS_STORAGE_KEY, JSON.stringify(positions));
+    } catch (e) {
+      console.warn('LocalStorage save error (positions):', e);
+    }
+  }, [positions]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(INVENTORY_STORAGE_KEY, JSON.stringify(inventory));
+    } catch (e) {
+      console.warn('LocalStorage save error (inventory):', e);
+    }
+  }, [inventory]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(INSPECTIONS_STORAGE_KEY, JSON.stringify(inspections));
+    } catch (e) {
+      console.warn('LocalStorage save error (inspections):', e);
+    }
+  }, [inspections]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(KANBAN_STORAGE_KEY, JSON.stringify(kanban));
+    } catch (e) {
+      console.warn('LocalStorage save error (kanban):', e);
+    }
+  }, [kanban]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(KONSAR_STORAGE_KEY, JSON.stringify(konSar));
+    } catch (e) {
+      console.warn('LocalStorage save error (konSar):', e);
+    }
+  }, [konSar]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TERMMEROD_STORAGE_KEY, JSON.stringify(termMerod));
+    } catch (e) {
+      console.warn('LocalStorage save error (termMerod):', e);
+    }
+  }, [termMerod]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(BEEPULO_STORAGE_KEY, JSON.stringify(beepulo));
+    } catch (e) {
+      console.warn('LocalStorage save error (beepulo):', e);
+    }
+  }, [beepulo]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(FEJSARU_STORAGE_KEY, JSON.stringify(fejSaru));
+    } catch (e) {
+      console.warn('LocalStorage save error (fejSaru):', e);
+    }
+  }, [fejSaru]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SARU_SPECS_STORAGE_KEY, JSON.stringify(saruSpecs));
+    } catch (e) {
+      console.warn('LocalStorage save error (saruSpecs):', e);
+    }
+  }, [saruSpecs]);
+
+  // Initial live sync on mount from Google Sheets
+  useEffect(() => {
+    syncWithGoogleSheet().catch(() => {});
+  }, []);
+
+  const syncWithGoogleSheet = async (customUrl?: string) => {
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const targetUrl = customUrl || sheetUrl;
+
+      // 1. Fetch Products
+      const fetchedProducts = await fetchProductsFromGoogleSheet(targetUrl);
+      if (fetchedProducts.length > 0) {
+        setRawProducts(fetchedProducts);
+      }
+
+      // 2. Fetch Positions
+      const fetchedPositions = await fetchPositionsFromGoogleSheet(targetUrl);
+      if (fetchedPositions.length > 0) {
+        setPositions(fetchedPositions);
+      }
+
+      // 3. Fetch Inventory
+      const fetchedInventory = await fetchInventoryFromGoogleSheet(targetUrl);
+      if (fetchedInventory.length > 0) {
+        setInventory(fetchedInventory);
+      }
+
+      // 4. Fetch Inspections (Karbantartás munkalap)
+      const fetchedInspections = await fetchInspectionsFromGoogleSheet(targetUrl);
+      if (fetchedInspections.length > 0) {
+        setInspections(fetchedInspections);
+      }
+
+      // 5. Fetch Kanban (kanban munkalap: Terv, Folyamatban, Teszt, Befejezve)
+      const fetchedKanban = await fetchKanbanFromGoogleSheet(targetUrl);
+      if (fetchedKanban.length > 0) {
+        setKanban(fetchedKanban);
+      }
+
+      // 6. Fetch KonSar (Konnektor - Saru kapcsolatok munkalap)
+      const fetchedKonSar = await fetchKonSarFromGoogleSheet(targetUrl);
+      if (fetchedKonSar.length > 0) {
+        setKonSar(fetchedKonSar);
+      }
+
+      // 6. Fetch TermMerod (Termék - Mérődoboz kapcsolatok munkalap)
+      const fetchedTermMerod = await fetchTermMerodFromGoogleSheet(targetUrl);
+      if (fetchedTermMerod.length > 0) {
+        setTermMerod(fetchedTermMerod);
+      }
+
+      // 7. Fetch Beépülő Alkatrész munkalap
+      const fetchedBeepulo = await fetchBeepuloFromGoogleSheet(targetUrl);
+      if (fetchedBeepulo.length > 0) {
+        setBeepulo(fetchedBeepulo);
+      }
+
+      // 8. Fetch FejSaru (Saruzófej - Saru kapcsolatok munkalap)
+      const fetchedFejSaru = await fetchFejSaruFromGoogleSheet(targetUrl);
+      if (fetchedFejSaru.length > 0) {
+        setFejSaru(fetchedFejSaru);
+      }
+
+      // 9. Fetch Saru Segédtáblázat ('Segédtáblázat 1. Saruk másolata' munkalap)
+      const fetchedSaruSpecs = await fetchSaruSpecsFromGoogleSheet(targetUrl);
+      if (fetchedSaruSpecs.length > 0) {
+        setSaruSpecs(fetchedSaruSpecs);
+      }
+
+      const now = new Date().toLocaleTimeString('hu-HU', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+      const dateStr = `${new Date().toLocaleDateString('hu-HU')} ${now}`;
+      setLastSyncedAt(dateStr);
+      localStorage.setItem(SYNC_TIME_KEY, dateStr);
+    } catch (err: unknown) {
+      console.error('Google Sheet sync error:', err);
+      const message = err instanceof Error ? err.message : 'Sikertelen szinkronizáció';
+      setSyncError(message);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const importCsvText = (csvText: string): number => {
+    const imported = parseProductsCsv(csvText);
+    if (imported.length > 0) {
+      const map = new Map<string, Product>();
+      rawProducts.forEach((p) => map.set(p.id, p));
+      imported.forEach((p) => map.set(p.id, p));
+      const updated = Array.from(map.values());
+      setRawProducts(updated);
+      const now = `${new Date().toLocaleDateString('hu-HU')} ${new Date().toLocaleTimeString('hu-HU')}`;
+      setLastSyncedAt(now);
+      localStorage.setItem(SYNC_TIME_KEY, now);
+      return imported.length;
+    }
+    return 0;
+  };
+
+  const importPositionsCsvText = (csvText: string): number => {
+    const imported = parsePositionsCsv(csvText);
+    if (imported.length > 0) {
+      const map = new Map<string, WarehousePosition>();
+      positions.forEach((p) => map.set(p.id, p));
+      imported.forEach((p) => map.set(p.id, p));
+      setPositions(Array.from(map.values()));
+      return imported.length;
+    }
+    return 0;
+  };
+
+  const importInventoryCsvText = (csvText: string): number => {
+    const imported = parseInventoryCsv(csvText);
+    if (imported.length > 0) {
+      const map = new Map<string, InventoryRecord>();
+      inventory.forEach((i) => map.set(i.id, i));
+      imported.forEach((i) => map.set(i.id, i));
+      setInventory(Array.from(map.values()));
+      return imported.length;
+    }
+    return 0;
+  };
+
+  const importInspectionsCsvText = (csvText: string): number => {
+    const imported = parseInspectionsCsv(csvText);
+    if (imported.length > 0) {
+      const map = new Map<string, Inspection>();
+      inspections.forEach((i) => map.set(i.id, i));
+      imported.forEach((i) => map.set(i.id, i));
+      setInspections(Array.from(map.values()));
+      return imported.length;
+    }
+    return 0;
+  };
+
+  const importKanbanCsvText = (csvText: string): number => {
+    const imported = parseKanbanCsv(csvText);
+    if (imported.length > 0) {
+      const map = new Map<string, KanbanItem>();
+      kanban.forEach((k) => map.set(k.id, k));
+      imported.forEach((k) => map.set(k.id, k));
+      setKanban(Array.from(map.values()));
+      return imported.length;
+    }
+    return 0;
+  };
+
+  const exportCsv = (): string => {
+    return exportProductsToCsv(products);
+  };
+
+  const exportPositionsCsv = (): string => {
+    return exportPositionsToCsv(positions);
+  };
+
+  const exportInventoryCsv = (): string => {
+    return exportInventoryToCsv(inventory);
+  };
+
+  const exportInspectionsCsv = (): string => {
+    return exportInspectionsToCsv(inspections);
+  };
+
+  const exportKanbanCsv = (): string => {
+    return exportKanbanToCsv(kanban);
+  };
+
+  const importKonSarCsvText = (csvText: string): number => {
+    const imported = parseKonSarCsv(csvText);
+    if (imported.length > 0) {
+      const map = new Map<string, KonSarRelation>();
+      konSar.forEach((k) => map.set(k.id, k));
+      imported.forEach((k) => map.set(k.id, k));
+      setKonSar(Array.from(map.values()));
+      return imported.length;
+    }
+    return 0;
+  };
+
+  const exportKonSarCsv = (): string => {
+    return exportKonSarToCsv(konSar);
+  };
+
+  const importTermMerodCsvText = (csvText: string): number => {
+    const imported = parseTermMerodCsv(csvText);
+    if (imported.length > 0) {
+      const map = new Map<string, TermMerodRelation>();
+      termMerod.forEach((k) => map.set(k.id, k));
+      imported.forEach((k) => map.set(k.id, k));
+      setTermMerod(Array.from(map.values()));
+      return imported.length;
+    }
+    return 0;
+  };
+
+  const exportTermMerodCsv = (): string => {
+    return exportTermMerodToCsv(termMerod);
+  };
+
+  const importBeepuloCsvText = (csvText: string): number => {
+    const imported = parseBeepuloCsv(csvText);
+    if (imported.length > 0) {
+      const map = new Map<string, BeepuloRelation>();
+      beepulo.forEach((k) => map.set(k.id, k));
+      imported.forEach((k) => map.set(k.id, k));
+      setBeepulo(Array.from(map.values()));
+      return imported.length;
+    }
+    return 0;
+  };
+
+  const exportBeepuloCsv = (): string => {
+    return exportBeepuloToCsv(beepulo);
+  };
+
+  const importFejSaruCsvText = (csvText: string): number => {
+    const imported = parseFejSaruCsv(csvText);
+    if (imported.length > 0) {
+      const map = new Map<string, FejSaruRelation>();
+      fejSaru.forEach((k) => map.set(k.id, k));
+      imported.forEach((k) => map.set(k.id, k));
+      setFejSaru(Array.from(map.values()));
+      return imported.length;
+    }
+    return 0;
+  };
+
+  const exportFejSaruCsv = (): string => {
+    return exportFejSaruToCsv(fejSaru);
+  };
+
+  const importSaruSpecsCsvText = (csvText: string): number => {
+    const imported = parseSaruSpecsCsv(csvText);
+    if (imported.length > 0) {
+      const map = new Map<string, SaruSpec>();
+      saruSpecs.forEach((s) => map.set(s.id, s));
+      imported.forEach((s) => map.set(s.id, s));
+      setSaruSpecs(Array.from(map.values()));
+      return imported.length;
+    }
+    return 0;
+  };
+
+  const exportSaruSpecsCsv = (): string => {
+    return exportSaruSpecsToCsv(saruSpecs);
+  };
+
+  const getAllSaruSpecsForProduct = (productOrId: Product | string): SaruSpec[] => {
+    // If a product object is provided and it is explicitly a non-saru product (e.g. Saruzófej, Konnektor, Mérődoboz), do not show saru specs
+    if (typeof productOrId === 'object' && productOrId !== null) {
+      const cat = (productOrId.category || '').toLowerCase();
+      const name = (productOrId.name || '').toLowerCase();
+      if (
+        cat.includes('saruzófej') ||
+        cat.includes('saruzofej') ||
+        cat.includes('saruzógép') ||
+        cat.includes('saruzogep') ||
+        cat.includes('konnektor') ||
+        cat.includes('mérődoboz') ||
+        cat.includes('merodoboz') ||
+        cat.includes('daraboló') ||
+        cat.includes('darabolo') ||
+        cat.includes('blankoló') ||
+        cat.includes('blankolo') ||
+        cat.includes('prés') ||
+        cat.includes('pres') ||
+        cat.includes('egyéb gép') ||
+        cat.includes('egyeb gep') ||
+        cat.includes('fogó') ||
+        cat.includes('fogo')
+      ) {
+        return [];
+      }
+      if (
+        name.startsWith('saruzófej') ||
+        name.startsWith('saruzofej') ||
+        name.startsWith('saruzógép') ||
+        name.startsWith('saruzogep') ||
+        name.startsWith('konnektor')
+      ) {
+        return [];
+      }
+    }
+
+    const prodId = typeof productOrId === 'string' ? productOrId.trim() : productOrId.id?.trim() || '';
+    const baseId = getBaseProductId(prodId);
+    const prodIdLower = prodId.toLowerCase();
+    const baseIdLower = baseId.toLowerCase();
+    const factoryCode = typeof productOrId === 'object' ? productOrId.factoryCode?.trim() : undefined;
+    const factoryCodeLower = factoryCode ? factoryCode.toLowerCase() : undefined;
+    const prodName = typeof productOrId === 'object' ? productOrId.name?.trim() : undefined;
+    const prodNameLower = prodName ? prodName.toLowerCase() : undefined;
+
+    // Normalize helper removing special punctuation (hyphens, dots, slashes, spaces)
+    const norm = (str?: string) => (str ? str.toLowerCase().replace(/[\s\-_.\/°]/g, '') : '');
+    const normProdId = norm(prodId);
+    const normBaseId = norm(baseId);
+    const normFactoryCode = norm(factoryCode);
+    const normProdName = norm(prodName);
+
+    const matched: SaruSpec[] = [];
+    const seenIds = new Set<string>();
+
+    saruSpecs.forEach((s) => {
+      let isMatch = false;
+      const sProdId = (s.productId || '').trim();
+      const sProdIdLower = sProdId.toLowerCase();
+      const normSProdId = norm(sProdId);
+
+      const sFactoryCode = (s.factoryCode || '').trim();
+      const sFactoryCodeLower = sFactoryCode.toLowerCase();
+      const normSFactoryCode = norm(sFactoryCode);
+
+      // 1. Check Product ID / CEL Code match (Saru ID)
+      if (sProdIdLower) {
+        if (
+          sProdIdLower === prodIdLower ||
+          sProdIdLower === baseIdLower ||
+          prodIdLower.includes(sProdIdLower) ||
+          sProdIdLower.includes(prodIdLower) ||
+          (normSProdId && normProdId && (normSProdId === normProdId || normSProdId === normBaseId)) ||
+          (normSProdId && normFactoryCode && normSProdId === normFactoryCode) ||
+          (normSProdId && normProdName && normProdName.includes(normSProdId))
+        ) {
+          isMatch = true;
+        }
+      }
+
+      // 2. Check Factory Code match (Saru Gyári Kód)
+      if (!isMatch && sFactoryCodeLower) {
+        if (
+          (factoryCodeLower && (sFactoryCodeLower === factoryCodeLower || factoryCodeLower.includes(sFactoryCodeLower) || sFactoryCodeLower.includes(factoryCodeLower))) ||
+          sFactoryCodeLower === prodIdLower ||
+          sFactoryCodeLower === baseIdLower ||
+          prodIdLower.includes(sFactoryCodeLower) ||
+          (prodNameLower && (prodNameLower.includes(sFactoryCodeLower) || sFactoryCodeLower.includes(prodNameLower))) ||
+          (normSFactoryCode && normFactoryCode && (normSFactoryCode === normFactoryCode || normFactoryCode.includes(normSFactoryCode) || normSFactoryCode.includes(normFactoryCode))) ||
+          (normSFactoryCode && normProdId && (normSFactoryCode === normProdId || normSFactoryCode === normBaseId || normProdId.includes(normSFactoryCode))) ||
+          (normSFactoryCode && normProdName && (normProdName.includes(normSFactoryCode) || normSFactoryCode.includes(normProdName)))
+        ) {
+          isMatch = true;
+        }
+      }
+
+      if (isMatch && !seenIds.has(s.id)) {
+        seenIds.add(s.id);
+        matched.push(s);
+      }
+    });
+
+    return matched;
+  };
+
+  const getSaruSpecForProduct = (productOrId: Product | string): SaruSpec | undefined => {
+    const all = getAllSaruSpecsForProduct(productOrId);
+    return all[0];
+  };
+
+  const selectProductById = (id: string) => {
+    const baseId = getBaseProductId(id);
+    setSelectedProductId(baseId);
+    setActiveTab('detail');
+  };
+
+  const clearSelectedProduct = () => {
+    setSelectedProductId(null);
+  };
+
+  const selectPositionById = (idOrName: string) => {
+    if (!idOrName) return;
+    const clean = idOrName.trim();
+    const matched = positions.find(
+      (pos) =>
+        pos.id.toLowerCase() === clean.toLowerCase() ||
+        pos.name.toLowerCase() === clean.toLowerCase() ||
+        pos.name.toLowerCase().includes(clean.toLowerCase())
+    );
+    if (matched) {
+      setSelectedPositionId(matched.id);
+    } else {
+      setSelectedPositionId(clean);
+    }
+    setActiveTab('positions');
+  };
+
+  const clearSelectedPosition = () => {
+    setSelectedPositionId(null);
+  };
+
+  const updateFilter = <K extends keyof FilterState>(key: K, value: FilterState[K]) => {
+    setFilters((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const toggleFilterItem = (
+    key: 'categories' | 'manufacturers' | 'partTypes' | 'insulationTypes' | 'locations',
+    value: string
+  ) => {
+    setFilters((prev) => {
+      const currentList = prev[key] || [];
+      const exists = currentList.includes(value);
+      const updatedList = exists
+        ? currentList.filter((item) => item !== value)
+        : [...currentList, value];
+      return {
+        ...prev,
+        [key]: updatedList,
+      };
+    });
+  };
+
+  const setFilterItems = (
+    key: 'categories' | 'manufacturers' | 'partTypes' | 'insulationTypes' | 'locations',
+    values: string[]
+  ) => {
+    setFilters((prev) => ({
+      ...prev,
+      [key]: values,
+    }));
+  };
+
+  const clearFilterKey = (key: string) => {
+    setFilters((prev) => {
+      const updated = { ...prev };
+      if (key === 'categories' || key === 'category') {
+        updated.categories = [];
+        updated.category = '';
+      } else if (key === 'manufacturers' || key === 'manufacturer') {
+        updated.manufacturers = [];
+        updated.manufacturer = '';
+      } else if (key === 'partTypes' || key === 'partType') {
+        updated.partTypes = [];
+        updated.partType = '';
+      } else if (key === 'insulationTypes' || key === 'insulationType') {
+        updated.insulationTypes = [];
+        updated.insulationType = '';
+      } else if (key === 'locations' || key === 'location') {
+        updated.locations = [];
+        updated.location = '';
+      } else if (key in updated) {
+        (updated as unknown as Record<string, string>)[key] = '';
+      }
+      return updated;
+    });
+  };
+
+  const filterByValue = (
+    key: 'category' | 'manufacturer' | 'partType' | 'insulationType' | 'location',
+    value: string
+  ) => {
+    const pluralKeyMap: Record<
+      string,
+      'categories' | 'manufacturers' | 'partTypes' | 'insulationTypes' | 'locations'
+    > = {
+      category: 'categories',
+      manufacturer: 'manufacturers',
+      partType: 'partTypes',
+      insulationType: 'insulationTypes',
+      location: 'locations',
+    };
+    const pluralKey = pluralKeyMap[key];
+
+    setFilters((prev) => {
+      const currentList = prev[pluralKey] || [];
+      const isSelected = currentList.includes(value) || prev[key] === value;
+      const updatedList = isSelected
+        ? currentList.filter((item) => item !== value)
+        : [...currentList, value];
+
+      return {
+        ...prev,
+        [pluralKey]: updatedList,
+        [key]: updatedList.length === 1 ? updatedList[0] : '',
+      };
+    });
+    setActiveTab('inventory');
+  };
+
+  const resetFilters = () => {
+    setFilters(initialFilters);
+  };
+
+  const addProduct = (product: Product) => {
+    const baseId = getBaseProductId(product.id);
+    const cleanedProd = { ...product, id: baseId };
+    setRawProducts((prev) => [cleanedProd, ...prev.filter((p) => getBaseProductId(p.id) !== baseId)]);
+  };
+
+  const updateProduct = (id: string, updatedFields: Partial<Product>) => {
+    const baseId = getBaseProductId(id);
+    setRawProducts((prev) =>
+      prev.map((p) => (getBaseProductId(p.id) === baseId ? { ...p, ...updatedFields } : p))
+    );
+  };
+
+  const deleteProduct = (id: string) => {
+    const baseId = getBaseProductId(id);
+    setRawProducts((prev) => prev.filter((p) => getBaseProductId(p.id) !== baseId));
+    if (selectedProductId === baseId) {
+      setSelectedProductId(null);
+      setActiveTab('inventory');
+    }
+  };
+
+  // Positions CRUD
+  const addPosition = (position: WarehousePosition) => {
+    setPositions((prev) => [
+      position,
+      ...prev.filter((pos) => pos.id !== position.id),
+    ]);
+  };
+
+  const updatePosition = (id: string, updatedFields: Partial<WarehousePosition>) => {
+    setPositions((prev) =>
+      prev.map((pos) => (pos.id === id ? { ...pos, ...updatedFields } : pos))
+    );
+  };
+
+  const deletePosition = (id: string) => {
+    setPositions((prev) => prev.filter((pos) => pos.id !== id));
+  };
+
+  // Inventory Transactions CRUD
+  const addInventoryRecord = (record: InventoryRecord) => {
+    setInventory((prev) => [record, ...prev]);
+  };
+
+  const updateInventoryRecord = (id: string, updatedFields: Partial<InventoryRecord>) => {
+    setInventory((prev) =>
+      prev.map((rec) => (rec.id === id ? { ...rec, ...updatedFields } : rec))
+    );
+  };
+
+  const deleteInventoryRecord = (id: string) => {
+    setInventory((prev) => prev.filter((rec) => rec.id !== id));
+  };
+
+  // Inspections CRUD
+  const addInspection = (inspection: Inspection) => {
+    setInspections((prev) => [inspection, ...prev.filter((i) => i.id !== inspection.id)]);
+  };
+
+  const updateInspection = (id: string, updatedFields: Partial<Inspection>) => {
+    setInspections((prev) =>
+      prev.map((insp) => (insp.id === id ? { ...insp, ...updatedFields } : insp))
+    );
+  };
+
+  const deleteInspection = (id: string) => {
+    setInspections((prev) => prev.filter((insp) => insp.id !== id));
+    if (selectedInspectionId === id) {
+      setSelectedInspectionId(null);
+    }
+  };
+
+  const getNextInspectionId = (): string => {
+    const nextNum = inspections.length + 1;
+    return `INSP-${String(nextNum).padStart(3, '0')}`;
+  };
+
+  const getProductInspections = (productId: string): Inspection[] => {
+    const baseId = getBaseProductId(productId).toLowerCase();
+    return inspections.filter((insp) => {
+      const inspProdBase = getBaseProductId(insp.productId || '').toLowerCase();
+      const changeProdBase = insp.changeItem ? getBaseProductId(insp.changeItem).toLowerCase() : '';
+      return inspProdBase === baseId || changeProdBase === baseId;
+    });
+  };
+
+  const getProductAsReplacedItemInspections = (productId: string): Inspection[] => {
+    const baseId = getBaseProductId(productId).toLowerCase();
+    return inspections.filter((insp) => {
+      if (!insp.changeItem) return false;
+      const changeProdBase = getBaseProductId(insp.changeItem).toLowerCase();
+      return changeProdBase === baseId;
+    });
+  };
+
+  // Kanban CRUD & Helpers
+  const addKanbanItem = (item: KanbanItem) => {
+    const now = new Date().toISOString().split('T')[0];
+    const withDefaults: KanbanItem = {
+      ...item,
+      id: item.id || getNextKanbanId(),
+      createdAt: item.createdAt || now,
+      updatedAt: item.updatedAt || now,
+    };
+    setKanban((prev) => [withDefaults, ...prev.filter((k) => k.id !== withDefaults.id)]);
+  };
+
+  const updateKanbanItem = (id: string, updatedFields: Partial<KanbanItem>) => {
+    const now = new Date().toISOString().split('T')[0];
+    setKanban((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, ...updatedFields, updatedAt: updatedFields.updatedAt || now } : item
+      )
+    );
+  };
+
+  const deleteKanbanItem = (id: string) => {
+    setKanban((prev) => prev.filter((k) => k.id !== id));
+    if (selectedKanbanId === id) {
+      setSelectedKanbanId(null);
+    }
+  };
+
+  const moveKanbanItem = (id: string, newStatus: KanbanStatus | string) => {
+    updateKanbanItem(id, { status: newStatus as KanbanStatus });
+  };
+
+  const clearKanban = () => {
+    setKanban([]);
+    setSelectedKanbanId(null);
+    try {
+      localStorage.removeItem(KANBAN_STORAGE_KEY);
+      localStorage.removeItem('kinetic_kanban_cache');
+    } catch {
+      // ignore
+    }
+  };
+
+  const getNextKanbanId = (): string => {
+    const nextNum = kanban.length + 1;
+    const randomSuffix = Math.random().toString(36).substring(2, 5).toUpperCase();
+    return `KB-${String(nextNum).padStart(3, '0')}-${randomSuffix}`;
+  };
+
+  // KonSar CRUD & Helpers
+  const addKonSarRelation = (relation: KonSarRelation) => {
+    setKonSar((prev) => [relation, ...prev.filter((r) => r.id !== relation.id)]);
+  };
+
+  const deleteKonSarRelation = (id: string) => {
+    setKonSar((prev) => prev.filter((r) => r.id !== id));
+    if (selectedKonSarId === id) {
+      setSelectedKonSarId(null);
+    }
+  };
+
+  const getNextKonSarId = (): string => {
+    return Math.random().toString(16).substring(2, 10);
+  };
+
+  const getConnectedKonSar = (productId: string) => {
+    const cleanId = (productId || '').trim();
+    if (!cleanId) return [];
+    const baseId = getBaseProductId(cleanId);
+    const cLower = cleanId.toLowerCase();
+    const bLower = baseId.toLowerCase();
+
+    const seenPartners = new Set<string>();
+    const results: {
+      relation: KonSarRelation;
+      partnerId: string;
+      partnerProduct?: Product;
+      partnerType: 'Konnektor' | 'Saru' | 'Egyéb';
+      partnerCategory?: string;
+    }[] = [];
+
+    for (const rel of konSar) {
+      const p1 = (rel.productId1 || '').trim();
+      const p2 = (rel.productId2 || '').trim();
+      const p1Lower = p1.toLowerCase();
+      const p2Lower = p2.toLowerCase();
+
+      const isP1 = p1Lower === cLower || p1Lower === bLower;
+      const isP2 = p2Lower === cLower || p2Lower === bLower;
+
+      if (!isP1 && !isP2) continue;
+
+      const rawPartnerId = isP1 ? p2 : p1;
+      const partnerId = getBaseProductId(rawPartnerId);
+      const partnerIdLower = partnerId.toLowerCase();
+
+      // Skip empty, self-relation, or already seen partner
+      if (!partnerId || partnerIdLower === cLower || partnerIdLower === bLower) continue;
+      if (seenPartners.has(partnerIdLower)) continue;
+
+      seenPartners.add(partnerIdLower);
+
+      // Find partner product in products or rawProducts
+      const partnerProduct =
+        products.find(
+          (p) =>
+            p.id.toLowerCase() === partnerIdLower ||
+            getBaseProductId(p.id).toLowerCase() === partnerIdLower
+        ) ||
+        rawProducts.find(
+          (p) =>
+            p.id.toLowerCase() === partnerIdLower ||
+            getBaseProductId(p.id).toLowerCase() === partnerIdLower
+        ) ||
+        INITIAL_PRODUCTS.find(
+          (p) =>
+            p.id.toLowerCase() === partnerIdLower ||
+            getBaseProductId(p.id).toLowerCase() === partnerIdLower
+        );
+
+      let partnerType: 'Konnektor' | 'Saru' | 'Egyéb' = 'Egyéb';
+      const cat = (partnerProduct?.category || '').toLowerCase();
+      const name = (partnerProduct?.name || '').toLowerCase();
+      if (cat.includes('konnektor') || name.includes('konnektor') || partnerProduct?.connectorType) {
+        partnerType = 'Konnektor';
+      } else if (cat.includes('saru') || name.includes('saru') || partnerProduct?.terminalType) {
+        partnerType = 'Saru';
+      } else {
+        partnerType = isP1 ? 'Saru' : 'Konnektor';
+      }
+
+      const partnerCategory = partnerProduct?.category || (partnerType === 'Konnektor' ? 'Konnektor' : partnerType === 'Saru' ? 'Saru' : 'Gyártandó Termék');
+
+      results.push({
+        relation: rel,
+        partnerId,
+        partnerProduct,
+        partnerType,
+        partnerCategory,
+      });
+    }
+
+    return results;
+  };
+
+  // TermMerod CRUD & Helpers
+  const addTermMerodRelation = (relation: TermMerodRelation) => {
+    setTermMerod((prev) => [relation, ...prev.filter((r) => r.id !== relation.id)]);
+  };
+
+  const deleteTermMerodRelation = (id: string) => {
+    setTermMerod((prev) => prev.filter((r) => r.id !== id));
+    if (selectedTermMerodId === id) {
+      setSelectedTermMerodId(null);
+    }
+  };
+
+  const getNextTermMerodId = (): string => {
+    return `tm-${Math.random().toString(16).substring(2, 8)}`;
+  };
+
+  const getConnectedTermMerod = (productId: string) => {
+    const cleanId = (productId || '').trim();
+    if (!cleanId) return [];
+    const baseId = getBaseProductId(cleanId);
+    const cLower = cleanId.toLowerCase();
+    const bLower = baseId.toLowerCase();
+
+    const seenPartners = new Set<string>();
+    const results: {
+      relation: TermMerodRelation;
+      partnerId: string;
+      partnerProduct?: Product;
+      role: 'Termék' | 'Mérődoboz' | 'Egyéb';
+      partnerCategory?: string;
+    }[] = [];
+
+    for (const rel of termMerod) {
+      const p1 = (rel.productId1 || '').trim();
+      const p2 = (rel.productId2 || '').trim();
+      const p1Lower = p1.toLowerCase();
+      const p2Lower = p2.toLowerCase();
+
+      const isP1 = p1Lower === cLower || p1Lower === bLower;
+      const isP2 = p2Lower === cLower || p2Lower === bLower;
+
+      if (!isP1 && !isP2) continue;
+
+      const rawPartnerId = isP1 ? p2 : p1;
+      const partnerId = getBaseProductId(rawPartnerId);
+      const partnerIdLower = partnerId.toLowerCase();
+
+      // Skip empty, self-relation, or already seen partner
+      if (!partnerId || partnerIdLower === cLower || partnerIdLower === bLower) continue;
+      if (seenPartners.has(partnerIdLower)) continue;
+
+      seenPartners.add(partnerIdLower);
+
+      // Find partner product in products or rawProducts or initialProducts
+      const partnerProduct =
+        products.find(
+          (p) =>
+            p.id.toLowerCase() === partnerIdLower ||
+            getBaseProductId(p.id).toLowerCase() === partnerIdLower
+        ) ||
+        rawProducts.find(
+          (p) =>
+            p.id.toLowerCase() === partnerIdLower ||
+            getBaseProductId(p.id).toLowerCase() === partnerIdLower
+        ) ||
+        INITIAL_PRODUCTS.find(
+          (p) =>
+            p.id.toLowerCase() === partnerIdLower ||
+            getBaseProductId(p.id).toLowerCase() === partnerIdLower
+        );
+
+      let role: 'Termék' | 'Mérődoboz' | 'Egyéb' = isP1 ? 'Mérődoboz' : 'Termék';
+      const cat = (partnerProduct?.category || '').toLowerCase();
+      const name = (partnerProduct?.name || '').toLowerCase();
+      if (
+        cat.includes('mérő') ||
+        cat.includes('merodoboz') ||
+        name.includes('mérő') ||
+        name.includes('merodoboz') ||
+        partnerId.toUpperCase().startsWith('MD-')
+      ) {
+        role = 'Mérődoboz';
+      } else if (
+        cat.includes('saruzófej') ||
+        cat.includes('saru') ||
+        name.includes('saruzó') ||
+        cat.includes('termék') ||
+        cat.includes('gyártandó') ||
+        cat.includes('gyartando')
+      ) {
+        role = 'Termék';
+      }
+
+      // Always prioritize real category from the table/product metadata
+      let partnerCategory = partnerProduct?.category;
+      if (!partnerCategory) {
+        if (role === 'Mérődoboz') {
+          partnerCategory = 'Mérődoboz';
+        } else {
+          // If it's a product in TermMerod and not an MD, it is a Gyártandó Termék / Termék
+          partnerCategory = 'Gyártandó Termék';
+        }
+      }
+
+      results.push({
+        relation: rel,
+        partnerId,
+        partnerProduct,
+        role,
+        partnerCategory,
+      });
+    }
+
+    return results;
+  };
+
+  // Beépülő Alkatrész CRUD & Helpers
+  const addBeepuloRelation = (relation: BeepuloRelation) => {
+    setBeepulo((prev) => [relation, ...prev.filter((r) => r.id !== relation.id)]);
+  };
+
+  const deleteBeepuloRelation = (id: string) => {
+    setBeepulo((prev) => prev.filter((r) => r.id !== id));
+    if (selectedBeepuloId === id) {
+      setSelectedBeepuloId(null);
+    }
+  };
+
+  const getNextBeepuloId = (): string => {
+    return `bp-${Math.random().toString(16).substring(2, 8)}`;
+  };
+
+  const getConnectedBeepulo = (productId: string) => {
+    const cleanId = (productId || '').trim();
+    if (!cleanId) return [];
+    const baseId = getBaseProductId(cleanId);
+    const cLower = cleanId.toLowerCase();
+    const bLower = baseId.toLowerCase();
+
+    const seenPartners = new Set<string>();
+    const results: {
+      relation: BeepuloRelation;
+      partnerId: string;
+      partnerProduct?: Product;
+      role: 'Beépülő alkatrész' | 'Főtermék amibe beépül';
+      quantity: number;
+      note?: string;
+      partnerCategory?: string;
+    }[] = [];
+
+    for (const rel of beepulo) {
+      const p1 = (rel.productId1 || '').trim();
+      const p2 = (rel.productId2 || '').trim();
+      const p1Lower = p1.toLowerCase();
+      const p2Lower = p2.toLowerCase();
+
+      const isP1 = p1Lower === cLower || p1Lower === bLower;
+      const isP2 = p2Lower === cLower || p2Lower === bLower;
+
+      if (!isP1 && !isP2) continue;
+
+      const rawPartnerId = isP1 ? p2 : p1;
+      const partnerId = getBaseProductId(rawPartnerId);
+      const partnerIdLower = partnerId.toLowerCase();
+
+      // Skip empty, self-relation, or already seen partner (deduplication)
+      if (!partnerId || partnerIdLower === cLower || partnerIdLower === bLower) continue;
+      if (seenPartners.has(partnerIdLower)) continue;
+
+      seenPartners.add(partnerIdLower);
+
+      // Find partner product in products or rawProducts or initialProducts
+      const partnerProduct =
+        products.find(
+          (p) =>
+            p.id.toLowerCase() === partnerIdLower ||
+            getBaseProductId(p.id).toLowerCase() === partnerIdLower
+        ) ||
+        rawProducts.find(
+          (p) =>
+            p.id.toLowerCase() === partnerIdLower ||
+            getBaseProductId(p.id).toLowerCase() === partnerIdLower
+        ) ||
+        INITIAL_PRODUCTS.find(
+          (p) =>
+            p.id.toLowerCase() === partnerIdLower ||
+            getBaseProductId(p.id).toLowerCase() === partnerIdLower
+        );
+
+      const role: 'Beépülő alkatrész' | 'Főtermék amibe beépül' = isP1
+        ? 'Beépülő alkatrész'
+        : 'Főtermék amibe beépül';
+
+      let partnerCategory = partnerProduct?.category;
+      if (!partnerCategory) {
+        if (role === 'Beépülő alkatrész') {
+          partnerCategory = partnerProduct?.partType || 'Alkatrész';
+        } else {
+          partnerCategory = 'Főtermék / Saruzófej';
+        }
+      }
+
+      results.push({
+        relation: rel,
+        partnerId,
+        partnerProduct,
+        role,
+        quantity: rel.quantity || 1,
+        note: rel.note || (rel.customFields ? Object.values(rel.customFields)[0] : undefined),
+        partnerCategory,
+      });
+    }
+
+    return results;
+  };
+
+  // FejSaru CRUD & Helpers
+  const addFejSaruRelation = (relation: FejSaruRelation) => {
+    setFejSaru((prev) => [relation, ...prev.filter((r) => r.id !== relation.id)]);
+  };
+
+  const deleteFejSaruRelation = (id: string) => {
+    setFejSaru((prev) => prev.filter((r) => r.id !== id));
+    if (selectedFejSaruId === id) {
+      setSelectedFejSaruId(null);
+    }
+  };
+
+  const getNextFejSaruId = (): string => {
+    return `fs-${Math.random().toString(16).substring(2, 8)}`;
+  };
+
+  const getConnectedFejSaru = (productId: string) => {
+    const cleanId = (productId || '').trim();
+    if (!cleanId) return [];
+    const baseId = getBaseProductId(cleanId);
+    const cLower = cleanId.toLowerCase();
+    const bLower = baseId.toLowerCase();
+
+    const seenPartners = new Set<string>();
+    const results: {
+      relation: FejSaruRelation;
+      partnerId: string;
+      partnerProduct?: Product;
+      role: 'Saruzófej' | 'Saru' | 'Egyéb';
+      note?: string;
+      partnerCategory?: string;
+    }[] = [];
+
+    for (const rel of fejSaru) {
+      const p1 = (rel.productId1 || '').trim();
+      const p2 = (rel.productId2 || '').trim();
+      const p1Lower = p1.toLowerCase();
+      const p2Lower = p2.toLowerCase();
+
+      const isP1 = p1Lower === cLower || p1Lower === bLower;
+      const isP2 = p2Lower === cLower || p2Lower === bLower;
+
+      if (!isP1 && !isP2) continue;
+
+      const rawPartnerId = isP1 ? p2 : p1;
+      const partnerId = getBaseProductId(rawPartnerId);
+      const partnerIdLower = partnerId.toLowerCase();
+
+      // Skip empty, self-relation, or already seen partner
+      if (!partnerId || partnerIdLower === cLower || partnerIdLower === bLower) continue;
+      if (seenPartners.has(partnerIdLower)) continue;
+
+      seenPartners.add(partnerIdLower);
+
+      // Find partner product in products or rawProducts or initialProducts
+      const partnerProduct =
+        products.find(
+          (p) =>
+            p.id.toLowerCase() === partnerIdLower ||
+            getBaseProductId(p.id).toLowerCase() === partnerIdLower
+        ) ||
+        rawProducts.find(
+          (p) =>
+            p.id.toLowerCase() === partnerIdLower ||
+            getBaseProductId(p.id).toLowerCase() === partnerIdLower
+        ) ||
+        INITIAL_PRODUCTS.find(
+          (p) =>
+            p.id.toLowerCase() === partnerIdLower ||
+            getBaseProductId(p.id).toLowerCase() === partnerIdLower
+        );
+
+      let role: 'Saruzófej' | 'Saru' | 'Egyéb' = isP1 ? 'Saru' : 'Saruzófej';
+      const cat = (partnerProduct?.category || '').toLowerCase();
+      const name = (partnerProduct?.name || '').toLowerCase();
+
+      if (cat.includes('fej') || name.includes('saruzófej') || (name.startsWith('n') && !isNaN(Number(name.slice(1))))) {
+        role = 'Saruzófej';
+      } else if (cat.includes('saru') || name.includes('saru')) {
+        role = 'Saru';
+      }
+
+      let partnerCategory = partnerProduct?.category;
+      if (!partnerCategory) {
+        partnerCategory = role === 'Saruzófej' ? 'Saruzófej' : 'Saru';
+      }
+
+      results.push({
+        relation: rel,
+        partnerId,
+        partnerProduct,
+        role,
+        note: rel.note || (rel.customFields ? Object.values(rel.customFields)[0] : undefined),
+        partnerCategory,
+      });
+    }
+
+    return results;
+  };
+
+  const getNextTransactionId = (): string => {
+    const nextNum = inventory.length + 1;
+    return `TRX-${String(nextNum).padStart(3, '0')}`;
+  };
+
+  const recordTransaction = (params: {
+    id?: string;
+    productId: string;
+    positionId: string;
+    quantity: number;
+    date?: string;
+    note?: string;
+    condition?: 'new' | 'used';
+  }): InventoryRecord => {
+    const now = new Date();
+    const dateFormatted =
+      params.date ||
+      `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+        now.getDate()
+      ).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(
+        2,
+        '0'
+      )}`;
+
+    const trxId = params.id && params.id.trim()
+      ? params.id.trim()
+      : `TRX-${Date.now().toString().slice(-6)}`;
+
+    let targetProductId = params.productId.trim();
+    if (params.condition === 'used' || (params.condition === undefined && isUsedProductId(targetProductId))) {
+      targetProductId = getUsedProductId(targetProductId);
+    } else if (params.condition === 'new') {
+      targetProductId = getNewProductId(targetProductId);
+    }
+
+    const newRecord: InventoryRecord = {
+      id: trxId,
+      productId: targetProductId,
+      positionId: params.positionId.trim(),
+      quantity: Number(params.quantity) || 0,
+      date: dateFormatted,
+      note: params.note?.trim() || undefined,
+    };
+
+    addInventoryRecord(newRecord);
+    return newRecord;
+  };
+
+  const adjustStock = (
+    productId: string,
+    positionId: string,
+    deltaQuantity: number,
+    note?: string,
+    customDate?: string,
+    customTrxId?: string,
+    condition?: 'new' | 'used'
+  ) => {
+    if (deltaQuantity === 0) return;
+    const now = new Date();
+    const dateFormatted =
+      customDate ||
+      `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+        now.getDate()
+      ).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(
+        2,
+        '0'
+      )}`;
+
+    const trxId =
+      customTrxId && customTrxId.trim()
+        ? customTrxId.trim()
+        : `TRX-${Date.now().toString().slice(-6)}`;
+
+    let targetProductId = productId.trim();
+    if (condition === 'used') {
+      targetProductId = getUsedProductId(targetProductId);
+    } else if (condition === 'new') {
+      targetProductId = getNewProductId(targetProductId);
+    }
+
+    const isUsed = isUsedProductId(targetProductId);
+    const condLabel = isUsed ? 'Használt (H_)' : 'Új';
+
+    const defaultNote =
+      deltaQuantity > 0
+        ? `Készletnövelés (+${deltaQuantity} db - ${condLabel})`
+        : `Készletcsökkentés (${deltaQuantity} db - ${condLabel})`;
+
+    const newRecord: InventoryRecord = {
+      id: trxId,
+      productId: targetProductId,
+      positionId: positionId.trim(),
+      quantity: deltaQuantity,
+      date: dateFormatted,
+      note: note || defaultNote,
+    };
+
+    addInventoryRecord(newRecord);
+  };
+
+  // Stock Calculation Helpers
+  const getProductStockBreakdown = (productId: string): ProductStockBreakdown => {
+    return calculateProductStockBreakdown(productId, inventory);
+  };
+
+  const getProductTotalStock = (productId: string): number => {
+    return calculateProductStockBreakdown(productId, inventory).totalStock;
+  };
+
+  const getProductNewStock = (productId: string): number => {
+    return calculateProductStockBreakdown(productId, inventory).newStock;
+  };
+
+  const getProductUsedStock = (productId: string): number => {
+    return calculateProductStockBreakdown(productId, inventory).usedStock;
+  };
+
+  const getUnifiedPositions = (productId: string): UnifiedProductPosition[] => {
+    return getUnifiedProductPositions(productId, inventory, positions);
+  };
+
+  const getProductPositions = (productId: string): ProductStockPosition[] => {
+    const unified = getUnifiedProductPositions(productId, inventory, positions);
+    return unified.map((u) => ({
+      positionId: u.positionId,
+      positionName: u.positionName,
+      quantity: u.totalQuantity,
+      newQuantity: u.newQuantity,
+      usedQuantity: u.usedQuantity,
+      records: u.records,
+    }));
+  };
+
+  const getPositionProducts = (positionId: string): PositionProductItem[] => {
+    const posRecords = inventory.filter(
+      (rec) => rec.positionId.trim() === positionId.trim()
+    );
+
+    const baseMap = new Map<
+      string,
+      {
+        newQty: number;
+        usedQty: number;
+      }
+    >();
+
+    posRecords.forEach((rec) => {
+      const prodId = (rec.productId || '').trim();
+      const baseId = getBaseProductId(prodId);
+      if (!baseId) return;
+
+      const isUsed = isUsedProductId(prodId);
+      const qty = rec.quantity || 0;
+
+      const current = baseMap.get(baseId) || { newQty: 0, usedQty: 0 };
+      if (isUsed) {
+        current.usedQty += qty;
+      } else {
+        current.newQty += qty;
+      }
+      baseMap.set(baseId, current);
+    });
+
+    const result: PositionProductItem[] = [];
+    baseMap.forEach(({ newQty, usedQty }, baseId) => {
+      const totalQty = newQty + usedQty;
+      const masterProd =
+        products.find((p) => p.id === baseId) ||
+        rawProducts.find((p) => getBaseProductId(p.id) === baseId) || {
+          id: baseId,
+          name: baseId,
+        };
+
+      const cond: 'new' | 'used' | 'both' =
+        newQty > 0 && usedQty > 0 ? 'both' : usedQty > 0 ? 'used' : 'new';
+      const condLabel =
+        newQty > 0 && usedQty > 0
+          ? 'Új + Használt'
+          : usedQty > 0
+          ? 'Használt'
+          : 'Új';
+
+      result.push({
+        product: {
+          ...masterProd,
+          id: baseId,
+        },
+        baseId,
+        quantity: totalQty,
+        newQuantity: newQty,
+        usedQuantity: usedQty,
+        condition: cond,
+        isUsed: usedQty > 0 && newQty === 0,
+        conditionLabel: condLabel,
+        specificId: baseId,
+      });
+    });
+
+    // Sort by baseId
+    return result.sort((a, b) => a.baseId.localeCompare(b.baseId));
+  };
+
+  const getPositionTotalItems = (positionId: string): number => {
+    return inventory
+      .filter((rec) => rec.positionId.trim() === positionId.trim())
+      .reduce((sum, rec) => sum + (rec.quantity || 0), 0);
+  };
+
+  // Selected Product object
+  const selectedProduct = useMemo(() => {
+    if (!selectedProductId) return null;
+    const baseId = getBaseProductId(selectedProductId);
+    return products.find((p) => p.id === baseId || p.id === selectedProductId) || null;
+  }, [products, selectedProductId]);
+
+  // Dynamic filter collections
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    products.forEach((p) => {
+      if (p.category && p.category.trim()) set.add(p.category.trim());
+    });
+    return Array.from(set).sort();
+  }, [products]);
+
+  const manufacturers = useMemo(() => {
+    const set = new Set<string>();
+    products.forEach((p) => {
+      if (p.manufacturer && p.manufacturer.trim()) set.add(p.manufacturer.trim());
+    });
+    return Array.from(set).sort();
+  }, [products]);
+
+  const partTypes = useMemo(() => {
+    const set = new Set<string>();
+    products.forEach((p) => {
+      if (p.partType && p.partType.trim()) set.add(p.partType.trim());
+    });
+    return Array.from(set).sort();
+  }, [products]);
+
+  const insulationTypes = useMemo(() => {
+    const set = new Set<string>();
+    products.forEach((p) => {
+      if (p.insulationType && p.insulationType.trim()) set.add(p.insulationType.trim());
+    });
+    return Array.from(set).sort();
+  }, [products]);
+
+  const locations = useMemo(() => {
+    const set = new Set<string>();
+    // Include both product locations and position names
+    products.forEach((p) => {
+      if (p.location && p.location.trim()) set.add(p.location.trim());
+    });
+    positions.forEach((pos) => {
+      if (pos.name && pos.name.trim()) set.add(pos.name.trim());
+    });
+    return Array.from(set).sort();
+  }, [products, positions]);
+
+  // Filtered and Sorted Products
+  const filteredProducts = useMemo(() => {
+    return products
+      .filter((p) => {
+        const breakdown = calculateProductStockBreakdown(p.id, inventory);
+
+        if (filters.searchQuery) {
+          const query = filters.searchQuery.toLowerCase().trim();
+          const matchId = p.id.toLowerCase().includes(query);
+          const matchUsedId = `h_${p.id}`.toLowerCase().includes(query);
+          const matchName = p.name.toLowerCase().includes(query);
+          const matchDesc = p.description?.toLowerCase().includes(query) ?? false;
+          const matchFactoryCode = p.factoryCode?.toLowerCase().includes(query) ?? false;
+          const matchCategory = p.category?.toLowerCase().includes(query) ?? false;
+          const matchManufacturer = p.manufacturer?.toLowerCase().includes(query) ?? false;
+          const matchLocation = p.location?.toLowerCase().includes(query) ?? false;
+          const matchPartType = p.partType?.toLowerCase().includes(query) ?? false;
+
+          // Keyword searches like "használt", "hasznalt", "új", "uj"
+          const matchUsedKeyword =
+            (query === 'használt' || query === 'hasznalt' || query === 'h_') &&
+            breakdown.usedStock > 0;
+          const matchNewKeyword =
+            (query === 'új' || query === 'uj') && breakdown.newStock > 0;
+
+          if (
+            !matchId &&
+            !matchUsedId &&
+            !matchName &&
+            !matchDesc &&
+            !matchFactoryCode &&
+            !matchCategory &&
+            !matchManufacturer &&
+            !matchLocation &&
+            !matchPartType &&
+            !matchUsedKeyword &&
+            !matchNewKeyword
+          ) {
+            return false;
+          }
+        }
+
+        // Condition Filter check
+        if (filters.conditionFilter && filters.conditionFilter !== 'all') {
+          if (filters.conditionFilter === 'new' && breakdown.newStock <= 0) {
+            return false;
+          }
+          if (filters.conditionFilter === 'used' && breakdown.usedStock <= 0) {
+            return false;
+          }
+          if (
+            filters.conditionFilter === 'both' &&
+            (breakdown.newStock <= 0 || breakdown.usedStock <= 0)
+          ) {
+            return false;
+          }
+        }
+
+        // Category multi-select check
+        const activeCategories =
+          filters.categories && filters.categories.length > 0
+            ? filters.categories
+            : filters.category
+            ? [filters.category]
+            : [];
+        if (activeCategories.length > 0) {
+          if (!p.category || !activeCategories.includes(p.category.trim())) {
+            return false;
+          }
+        }
+
+        // Manufacturer multi-select check
+        const activeManufacturers =
+          filters.manufacturers && filters.manufacturers.length > 0
+            ? filters.manufacturers
+            : filters.manufacturer
+            ? [filters.manufacturer]
+            : [];
+        if (activeManufacturers.length > 0) {
+          if (!p.manufacturer || !activeManufacturers.includes(p.manufacturer.trim())) {
+            return false;
+          }
+        }
+
+        // Part Type multi-select check
+        const activePartTypes =
+          filters.partTypes && filters.partTypes.length > 0
+            ? filters.partTypes
+            : filters.partType
+            ? [filters.partType]
+            : [];
+        if (activePartTypes.length > 0) {
+          if (!p.partType || !activePartTypes.includes(p.partType.trim())) {
+            return false;
+          }
+        }
+
+        // Insulation Type multi-select check
+        const activeInsulationTypes =
+          filters.insulationTypes && filters.insulationTypes.length > 0
+            ? filters.insulationTypes
+            : filters.insulationType
+            ? [filters.insulationType]
+            : [];
+        if (activeInsulationTypes.length > 0) {
+          if (!p.insulationType || !activeInsulationTypes.includes(p.insulationType.trim())) {
+            return false;
+          }
+        }
+
+        // Location multi-select check
+        const activeLocations =
+          filters.locations && filters.locations.length > 0
+            ? filters.locations
+            : filters.location
+            ? [filters.location]
+            : [];
+        if (activeLocations.length > 0) {
+          if (!p.location || !activeLocations.includes(p.location.trim())) {
+            return false;
+          }
+        }
+
+        if (filters.insulationGripperType && p.insulationGripperType !== filters.insulationGripperType)
+          return false;
+        if (filters.quality && p.quality !== filters.quality) return false;
+        if (filters.hasImageOnly && !p.image) return false;
+
+        return true;
+      })
+      .sort((a, b) => {
+        let fieldA = (a[filters.sortBy as keyof Product] || '').toString();
+        let fieldB = (b[filters.sortBy as keyof Product] || '').toString();
+        const order = filters.sortOrder === 'asc' ? 1 : -1;
+        return fieldA.localeCompare(fieldB, 'hu', { numeric: true }) * order;
+      });
+  }, [products, filters, inventory]);
+
+  return (
+    <ProductContext.Provider
+      value={{
+        products,
+        rawProducts,
+        filteredProducts,
+        selectedProduct,
+        selectedProductId,
+        activeTab,
+        viewMode,
+        filters,
+        isSyncing,
+        syncError,
+        lastSyncedAt,
+        sheetUrl,
+        totalCount: products.length,
+        categories,
+        manufacturers,
+        partTypes,
+        insulationTypes,
+        locations,
+        positions,
+        inventory,
+        transactions: inventory,
+        selectedPositionId,
+        inspections,
+        selectedInspectionId,
+        kanban,
+        selectedKanbanId,
+        setSelectedKanbanId,
+        konSar,
+        selectedKonSarId,
+        setSelectedKonSarId,
+        termMerod,
+        selectedTermMerodId,
+        setSelectedTermMerodId,
+        beepulo,
+        selectedBeepuloId,
+        setSelectedBeepuloId,
+        fejSaru,
+        selectedFejSaruId,
+        setSelectedFejSaruId,
+        saruSpecs,
+        selectedSaruSpecId,
+        setSelectedSaruSpecId,
+        getSaruSpecForProduct,
+        getAllSaruSpecsForProduct,
+        getProductTotalStock,
+        getProductNewStock,
+        getProductUsedStock,
+        getProductStockBreakdown,
+        getProductPositions,
+        getUnifiedPositions,
+        getPositionProducts,
+        getPositionTotalItems,
+        getNextTransactionId,
+        getProductInspections,
+        getProductAsReplacedItemInspections,
+        getNextInspectionId,
+        getConnectedKonSar,
+        getNextKonSarId,
+        getConnectedTermMerod,
+        getNextTermMerodId,
+        getConnectedBeepulo,
+        getNextBeepuloId,
+        getConnectedFejSaru,
+        getNextFejSaruId,
+        setActiveTab,
+        setViewMode,
+        selectProductById,
+        clearSelectedProduct,
+        setSelectedPositionId,
+        selectPositionById,
+        clearSelectedPosition,
+        setSelectedInspectionId,
+        setFilters,
+        updateFilter,
+        toggleFilterItem,
+        setFilterItems,
+        clearFilterKey,
+        filterByValue,
+        resetFilters,
+        syncWithGoogleSheet,
+        importCsvText,
+        importPositionsCsvText,
+        importInventoryCsvText,
+        importInspectionsCsvText,
+        importKanbanCsvText,
+        importKonSarCsvText,
+        importTermMerodCsvText,
+        exportCsv,
+        exportPositionsCsv,
+        exportInventoryCsv,
+        exportInspectionsCsv,
+        exportKanbanCsv,
+        exportKonSarCsv,
+        exportTermMerodCsv,
+        exportBeepuloCsv,
+        importBeepuloCsvText,
+        exportFejSaruCsv,
+        importFejSaruCsvText,
+        exportSaruSpecsCsv,
+        importSaruSpecsCsvText,
+        addProduct,
+        updateProduct,
+        deleteProduct,
+        setSheetUrl,
+        addPosition,
+        updatePosition,
+        deletePosition,
+        addInventoryRecord,
+        updateInventoryRecord,
+        deleteInventoryRecord,
+        adjustStock,
+        recordTransaction,
+        addInspection,
+        updateInspection,
+        deleteInspection,
+        addKanbanItem,
+        updateKanbanItem,
+        deleteKanbanItem,
+        moveKanbanItem,
+        clearKanban,
+        getNextKanbanId,
+        addKonSarRelation,
+        deleteKonSarRelation,
+        addTermMerodRelation,
+        deleteTermMerodRelation,
+        addBeepuloRelation,
+        deleteBeepuloRelation,
+        addFejSaruRelation,
+        deleteFejSaruRelation,
+      }}
+    >
+      {children}
+    </ProductContext.Provider>
+  );
+};
+
+export const useProducts = () => {
+  const context = useContext(ProductContext);
+  if (!context) {
+    throw new Error('useProducts must be used within a ProductProvider');
+  }
+  return context;
+};
+

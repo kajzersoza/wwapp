@@ -1,0 +1,8 @@
+{
+  "name": "Remix Kinetic Logistics - Termék és Raktárkezelő",
+  "description": "Ipari raktárkezelő, termékmenedzser és alkatrész-nyilvántartó alkalmazás Google Sheets szinkronizációval és dinamikus műszaki adatlappal.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

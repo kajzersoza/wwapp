@@ -1,0 +1,88 @@
+import { BeepuloRelation } from "../types";
+
+export const INITIAL_BEEPULO: BeepuloRelation[] = [
+  {
+    id: "bp-001",
+    productId1: "40107.00.33",
+    productId2: "ME.911330114",
+    quantity: 1,
+    note: "ELSŐ MOZGÓ ÜLLŐ",
+  },
+  {
+    id: "bp-002",
+    productId1: "40107.00.33",
+    productId2: "MLS0185-J",
+    quantity: 1,
+    note: "HÁTSÓ MOZGÓ ÜLLŐ",
+  },
+  {
+    id: "bp-003",
+    productId1: "40107.00.33",
+    productId2: "40107.00.34",
+    quantity: 1,
+    note: "SZIGETELÉSMEGFOGÓ",
+  },
+  {
+    id: "bp-004",
+    productId1: "40107.00.34",
+    productId2: "ME.911330114",
+    quantity: 1,
+    note: "ÜLLŐ",
+  },
+  {
+    id: "bp-005",
+    productId1: "40103.00.37",
+    productId2: "ME.911330114",
+    quantity: 1,
+    note: "MOZGÓ ÜLLŐ",
+  },
+  {
+    id: "bp-006",
+    productId1: "40103.00.37",
+    productId2: "MLS0185-J",
+    quantity: 1,
+    note: "FIX ÜLLŐ",
+  },
+  {
+    id: "bp-007",
+    productId1: "40107.00.36",
+    productId2: "MLS0185-J",
+    quantity: 1,
+    note: "ELSŐ FIX ÜLLŐ",
+  },
+  {
+    id: "bp-008",
+    productId1: "40107.00.37",
+    productId2: "ME.911330114",
+    quantity: 1,
+    note: "ELSŐ MOZGÓ ÜLLŐ",
+  },
+  {
+    id: "bp-009",
+    productId1: "40103.00.40",
+    productId2: "MLS0185-J",
+    quantity: 1,
+    note: "HÁTSÓ FIX ÜLLŐ",
+  },
+  {
+    id: "bp-010",
+    productId1: "40103.00.41",
+    productId2: "ME.911330114",
+    quantity: 1,
+    note: "MOZGÓ ÜLLŐ",
+  },
+  {
+    id: "bp-011",
+    productId1: "40107.00.39",
+    productId2: "MLS0185-J",
+    quantity: 1,
+    note: "SZIGETELÉSMEGFOGÓ",
+  },
+  {
+    id: "bp-012",
+    productId1: "40103.00.43",
+    productId2: "ME.911330114",
+    quantity: 1,
+    note: "MOZGÓ ÜLLŐ",
+  },
+];

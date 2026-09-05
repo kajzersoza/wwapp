@@ -71,6 +71,17 @@ import {
   exportFejSaruToCsv,
   exportSaruSpecsToCsv,
 } from '../services/sheetsService';
+import {
+  FIRESTORE_COLLECTIONS,
+  FullDataset,
+  saveItemToFirestore,
+  deleteItemFromFirestore,
+  subscribeToCollection,
+  bulkSaveToFirestore,
+  uploadAllToFirestore,
+  downloadAllFromFirestore,
+  clearFirestoreCollection,
+} from '../services/firebaseService';
 
 export interface PositionProductItem {
   product: Product;
@@ -253,6 +264,17 @@ interface ProductContextType {
   exportBeepuloCsv: () => string;
   exportFejSaruCsv: () => string;
   exportSaruSpecsCsv: () => string;
+
+  // Firebase Firestore State & Actions
+  isFirebaseConnected: boolean;
+  isFirebaseLoading: boolean;
+  firebaseError: string | null;
+  firebaseSyncTime: string | null;
+  firebaseStats: Record<string, number>;
+  migrateToFirebase: () => Promise<{ success: boolean; stats: Record<string, number> }>;
+  refreshFromFirebase: () => Promise<void>;
+  exportFullBackupJson: () => string;
+  importFullBackupJson: (jsonStr: string) => Promise<{ success: boolean; count: number }>;
 
   // Products CRUD
   addProduct: (product: Product) => void;
@@ -569,6 +591,13 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     return localStorage.getItem(SHEET_URL_KEY) || DEFAULT_GOOGLE_SHEET_URL;
   });
 
+  // Firebase State
+  const [isFirebaseConnected, setIsFirebaseConnected] = useState<boolean>(false);
+  const [isFirebaseLoading, setIsFirebaseLoading] = useState<boolean>(true);
+  const [firebaseError, setFirebaseError] = useState<string | null>(null);
+  const [firebaseSyncTime, setFirebaseSyncTime] = useState<string | null>(null);
+  const [firebaseStats, setFirebaseStats] = useState<Record<string, number>>({});
+
   const setSheetUrl = (url: string) => {
     setSheetUrlState(url);
     localStorage.setItem(SHEET_URL_KEY, url);
@@ -655,9 +684,117 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     }
   }, [saruSpecs]);
 
-  // Initial live sync on mount from Google Sheets
+  // Initial Firebase real-time listeners & database bootstrapping
   useEffect(() => {
-    syncWithGoogleSheet().catch(() => {});
+    let unsubs: (() => void)[] = [];
+
+    const initFirebase = async () => {
+      setIsFirebaseLoading(true);
+      setFirebaseError(null);
+      try {
+        // Check if data exists in Firestore
+        const cloudData = await downloadAllFromFirestore();
+        const hasCloudData = cloudData.products.length > 0;
+
+        if (hasCloudData) {
+          setRawProducts(cloudData.products);
+          if (cloudData.positions.length > 0) setPositions(cloudData.positions);
+          if (cloudData.inventory.length > 0) setInventory(cloudData.inventory);
+          if (cloudData.inspections.length > 0) setInspections(cloudData.inspections);
+          if (cloudData.kanban.length > 0) setKanban(cloudData.kanban);
+          if (cloudData.konSar.length > 0) setKonSar(cloudData.konSar);
+          if (cloudData.termMerod.length > 0) setTermMerod(cloudData.termMerod);
+          if (cloudData.beepulo.length > 0) setBeepulo(cloudData.beepulo);
+          if (cloudData.fejSaru.length > 0) setFejSaru(cloudData.fejSaru);
+          if (cloudData.saruSpecs.length > 0) setSaruSpecs(cloudData.saruSpecs);
+
+          setIsFirebaseConnected(true);
+          setFirebaseSyncTime(new Date().toLocaleTimeString('hu-HU'));
+        } else {
+          // If Firestore is completely empty on first launch, upload current initial/cached dataset
+          const initialDataset: FullDataset = {
+            products: rawProducts,
+            positions,
+            inventory,
+            inspections,
+            kanban,
+            konSar,
+            termMerod,
+            beepulo,
+            fejSaru,
+            saruSpecs,
+          };
+          const res = await uploadAllToFirestore(initialDataset);
+          setFirebaseStats(res.stats);
+          setIsFirebaseConnected(true);
+          setFirebaseSyncTime(new Date().toLocaleTimeString('hu-HU'));
+        }
+
+        // Setup real-time subscriptions so any other device/tab or write is instantly reflected
+        unsubs.push(
+          subscribeToCollection<Product>(FIRESTORE_COLLECTIONS.PRODUCTS, (items) => {
+            if (items.length > 0) setRawProducts(items);
+            setIsFirebaseConnected(true);
+          })
+        );
+        unsubs.push(
+          subscribeToCollection<WarehousePosition>(FIRESTORE_COLLECTIONS.POSITIONS, (items) => {
+            if (items.length > 0) setPositions(items);
+          })
+        );
+        unsubs.push(
+          subscribeToCollection<InventoryRecord>(FIRESTORE_COLLECTIONS.INVENTORY, (items) => {
+            if (items.length > 0) setInventory(items);
+          })
+        );
+        unsubs.push(
+          subscribeToCollection<Inspection>(FIRESTORE_COLLECTIONS.INSPECTIONS, (items) => {
+            if (items.length > 0) setInspections(items);
+          })
+        );
+        unsubs.push(
+          subscribeToCollection<KanbanItem>(FIRESTORE_COLLECTIONS.KANBAN, (items) => {
+            if (items.length > 0) setKanban(items);
+          })
+        );
+        unsubs.push(
+          subscribeToCollection<KonSarRelation>(FIRESTORE_COLLECTIONS.KONSAR, (items) => {
+            if (items.length > 0) setKonSar(items);
+          })
+        );
+        unsubs.push(
+          subscribeToCollection<TermMerodRelation>(FIRESTORE_COLLECTIONS.TERMMEROD, (items) => {
+            if (items.length > 0) setTermMerod(items);
+          })
+        );
+        unsubs.push(
+          subscribeToCollection<BeepuloRelation>(FIRESTORE_COLLECTIONS.BEEPULO, (items) => {
+            if (items.length > 0) setBeepulo(items);
+          })
+        );
+        unsubs.push(
+          subscribeToCollection<FejSaruRelation>(FIRESTORE_COLLECTIONS.FEJSARU, (items) => {
+            if (items.length > 0) setFejSaru(items);
+          })
+        );
+        unsubs.push(
+          subscribeToCollection<SaruSpec>(FIRESTORE_COLLECTIONS.SARUSPECS, (items) => {
+            if (items.length > 0) setSaruSpecs(items);
+          })
+        );
+      } catch (err: unknown) {
+        console.error('Firebase initialization error:', err);
+        setFirebaseError(err instanceof Error ? err.message : 'Firebase hiba');
+      } finally {
+        setIsFirebaseLoading(false);
+      }
+    };
+
+    initFirebase();
+
+    return () => {
+      unsubs.forEach((unsub) => unsub());
+    };
   }, []);
 
   const syncWithGoogleSheet = async (customUrl?: string) => {
@@ -726,6 +863,26 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         setSaruSpecs(fetchedSaruSpecs);
       }
 
+      // Also persist fetched data into Firebase Firestore
+      const dataset: FullDataset = {
+        products: fetchedProducts.length > 0 ? fetchedProducts : rawProducts,
+        positions: fetchedPositions.length > 0 ? fetchedPositions : positions,
+        inventory: fetchedInventory.length > 0 ? fetchedInventory : inventory,
+        inspections: fetchedInspections.length > 0 ? fetchedInspections : inspections,
+        kanban: fetchedKanban.length > 0 ? fetchedKanban : kanban,
+        konSar: fetchedKonSar.length > 0 ? fetchedKonSar : konSar,
+        termMerod: fetchedTermMerod.length > 0 ? fetchedTermMerod : termMerod,
+        beepulo: fetchedBeepulo.length > 0 ? fetchedBeepulo : beepulo,
+        fejSaru: fetchedFejSaru.length > 0 ? fetchedFejSaru : fejSaru,
+        saruSpecs: fetchedSaruSpecs.length > 0 ? fetchedSaruSpecs : saruSpecs,
+      };
+      uploadAllToFirestore(dataset)
+        .then((res) => {
+          setFirebaseStats(res.stats);
+          setIsFirebaseConnected(true);
+        })
+        .catch(console.error);
+
       const now = new Date().toLocaleTimeString('hu-HU', {
         hour: '2-digit',
         minute: '2-digit',
@@ -743,6 +900,115 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     }
   };
 
+  const migrateToFirebase = async (): Promise<{ success: boolean; stats: Record<string, number> }> => {
+    setIsSyncing(true);
+    setFirebaseError(null);
+    try {
+      const dataset: FullDataset = {
+        products: rawProducts,
+        positions,
+        inventory,
+        inspections,
+        kanban,
+        konSar,
+        termMerod,
+        beepulo,
+        fejSaru,
+        saruSpecs,
+      };
+      const res = await uploadAllToFirestore(dataset);
+      setFirebaseStats(res.stats);
+      setIsFirebaseConnected(true);
+      const nowStr = `${new Date().toLocaleDateString('hu-HU')} ${new Date().toLocaleTimeString('hu-HU')}`;
+      setFirebaseSyncTime(nowStr);
+      return res;
+    } catch (err: unknown) {
+      console.error('Firebase migration error:', err);
+      const message = err instanceof Error ? err.message : 'Sikertelen feltöltés Firebase-be';
+      setFirebaseError(message);
+      throw err;
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const refreshFromFirebase = async (): Promise<void> => {
+    setIsFirebaseLoading(true);
+    setFirebaseError(null);
+    try {
+      const data = await downloadAllFromFirestore();
+      if (data.products.length > 0) setRawProducts(data.products);
+      if (data.positions.length > 0) setPositions(data.positions);
+      if (data.inventory.length > 0) setInventory(data.inventory);
+      if (data.inspections.length > 0) setInspections(data.inspections);
+      if (data.kanban.length > 0) setKanban(data.kanban);
+      if (data.konSar.length > 0) setKonSar(data.konSar);
+      if (data.termMerod.length > 0) setTermMerod(data.termMerod);
+      if (data.beepulo.length > 0) setBeepulo(data.beepulo);
+      if (data.fejSaru.length > 0) setFejSaru(data.fejSaru);
+      if (data.saruSpecs.length > 0) setSaruSpecs(data.saruSpecs);
+
+      setIsFirebaseConnected(true);
+      setFirebaseSyncTime(new Date().toLocaleTimeString('hu-HU'));
+    } catch (err: unknown) {
+      console.error('Firebase refresh error:', err);
+      setFirebaseError(err instanceof Error ? err.message : 'Sikertelen letöltés Firebase-ből');
+      throw err;
+    } finally {
+      setIsFirebaseLoading(false);
+    }
+  };
+
+  const exportFullBackupJson = (): string => {
+    const backup = {
+      version: '1.0',
+      exportedAt: new Date().toISOString(),
+      database: 'Firestore',
+      data: {
+        products: rawProducts,
+        positions,
+        inventory,
+        inspections,
+        kanban,
+        konSar,
+        termMerod,
+        beepulo,
+        fejSaru,
+        saruSpecs,
+      },
+    };
+    return JSON.stringify(backup, null, 2);
+  };
+
+  const importFullBackupJson = async (jsonStr: string): Promise<{ success: boolean; count: number }> => {
+    try {
+      const parsed = JSON.parse(jsonStr);
+      const data = (parsed.data || parsed) as Partial<FullDataset>;
+      if (!data || (!data.products && !data.positions)) {
+        throw new Error('Érvénytelen biztonsági mentés fájl.');
+      }
+      const dataset: FullDataset = {
+        products: data.products || [],
+        positions: data.positions || [],
+        inventory: data.inventory || [],
+        inspections: data.inspections || [],
+        kanban: data.kanban || [],
+        konSar: data.konSar || [],
+        termMerod: data.termMerod || [],
+        beepulo: data.beepulo || [],
+        fejSaru: data.fejSaru || [],
+        saruSpecs: data.saruSpecs || [],
+      };
+      const res = await uploadAllToFirestore(dataset);
+      await refreshFromFirebase();
+      const total = Object.values(res.stats).reduce((a, b) => a + b, 0);
+      return { success: true, count: total };
+    } catch (err: unknown) {
+      console.error('Import backup JSON error:', err);
+      throw err;
+    }
+  };
+
   const importCsvText = (csvText: string): number => {
     const imported = parseProductsCsv(csvText);
     if (imported.length > 0) {
@@ -751,6 +1017,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
       imported.forEach((p) => map.set(p.id, p));
       const updated = Array.from(map.values());
       setRawProducts(updated);
+      bulkSaveToFirestore(FIRESTORE_COLLECTIONS.PRODUCTS, updated).catch(console.error);
       const now = `${new Date().toLocaleDateString('hu-HU')} ${new Date().toLocaleTimeString('hu-HU')}`;
       setLastSyncedAt(now);
       localStorage.setItem(SYNC_TIME_KEY, now);
@@ -765,7 +1032,9 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
       const map = new Map<string, WarehousePosition>();
       positions.forEach((p) => map.set(p.id, p));
       imported.forEach((p) => map.set(p.id, p));
-      setPositions(Array.from(map.values()));
+      const updated = Array.from(map.values());
+      setPositions(updated);
+      bulkSaveToFirestore(FIRESTORE_COLLECTIONS.POSITIONS, updated).catch(console.error);
       return imported.length;
     }
     return 0;
@@ -777,7 +1046,9 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
       const map = new Map<string, InventoryRecord>();
       inventory.forEach((i) => map.set(i.id, i));
       imported.forEach((i) => map.set(i.id, i));
-      setInventory(Array.from(map.values()));
+      const updated = Array.from(map.values());
+      setInventory(updated);
+      bulkSaveToFirestore(FIRESTORE_COLLECTIONS.INVENTORY, updated).catch(console.error);
       return imported.length;
     }
     return 0;
@@ -789,7 +1060,9 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
       const map = new Map<string, Inspection>();
       inspections.forEach((i) => map.set(i.id, i));
       imported.forEach((i) => map.set(i.id, i));
-      setInspections(Array.from(map.values()));
+      const updated = Array.from(map.values());
+      setInspections(updated);
+      bulkSaveToFirestore(FIRESTORE_COLLECTIONS.INSPECTIONS, updated).catch(console.error);
       return imported.length;
     }
     return 0;
@@ -801,7 +1074,9 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
       const map = new Map<string, KanbanItem>();
       kanban.forEach((k) => map.set(k.id, k));
       imported.forEach((k) => map.set(k.id, k));
-      setKanban(Array.from(map.values()));
+      const updated = Array.from(map.values());
+      setKanban(updated);
+      bulkSaveToFirestore(FIRESTORE_COLLECTIONS.KANBAN, updated).catch(console.error);
       return imported.length;
     }
     return 0;
@@ -833,7 +1108,9 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
       const map = new Map<string, KonSarRelation>();
       konSar.forEach((k) => map.set(k.id, k));
       imported.forEach((k) => map.set(k.id, k));
-      setKonSar(Array.from(map.values()));
+      const updated = Array.from(map.values());
+      setKonSar(updated);
+      bulkSaveToFirestore(FIRESTORE_COLLECTIONS.KONSAR, updated).catch(console.error);
       return imported.length;
     }
     return 0;
@@ -849,7 +1126,9 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
       const map = new Map<string, TermMerodRelation>();
       termMerod.forEach((k) => map.set(k.id, k));
       imported.forEach((k) => map.set(k.id, k));
-      setTermMerod(Array.from(map.values()));
+      const updated = Array.from(map.values());
+      setTermMerod(updated);
+      bulkSaveToFirestore(FIRESTORE_COLLECTIONS.TERMMEROD, updated).catch(console.error);
       return imported.length;
     }
     return 0;
@@ -865,7 +1144,9 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
       const map = new Map<string, BeepuloRelation>();
       beepulo.forEach((k) => map.set(k.id, k));
       imported.forEach((k) => map.set(k.id, k));
-      setBeepulo(Array.from(map.values()));
+      const updated = Array.from(map.values());
+      setBeepulo(updated);
+      bulkSaveToFirestore(FIRESTORE_COLLECTIONS.BEEPULO, updated).catch(console.error);
       return imported.length;
     }
     return 0;
@@ -881,7 +1162,9 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
       const map = new Map<string, FejSaruRelation>();
       fejSaru.forEach((k) => map.set(k.id, k));
       imported.forEach((k) => map.set(k.id, k));
-      setFejSaru(Array.from(map.values()));
+      const updated = Array.from(map.values());
+      setFejSaru(updated);
+      bulkSaveToFirestore(FIRESTORE_COLLECTIONS.FEJSARU, updated).catch(console.error);
       return imported.length;
     }
     return 0;
@@ -897,7 +1180,9 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
       const map = new Map<string, SaruSpec>();
       saruSpecs.forEach((s) => map.set(s.id, s));
       imported.forEach((s) => map.set(s.id, s));
-      setSaruSpecs(Array.from(map.values()));
+      const updated = Array.from(map.values());
+      setSaruSpecs(updated);
+      bulkSaveToFirestore(FIRESTORE_COLLECTIONS.SARUSPECS, updated).catch(console.error);
       return imported.length;
     }
     return 0;
@@ -1145,13 +1430,24 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     const baseId = getBaseProductId(product.id);
     const cleanedProd = { ...product, id: baseId };
     setRawProducts((prev) => [cleanedProd, ...prev.filter((p) => getBaseProductId(p.id) !== baseId)]);
+    saveItemToFirestore(FIRESTORE_COLLECTIONS.PRODUCTS, cleanedProd).catch(console.error);
   };
 
   const updateProduct = (id: string, updatedFields: Partial<Product>) => {
     const baseId = getBaseProductId(id);
+    let updatedProd: Product | null = null;
     setRawProducts((prev) =>
-      prev.map((p) => (getBaseProductId(p.id) === baseId ? { ...p, ...updatedFields } : p))
+      prev.map((p) => {
+        if (getBaseProductId(p.id) === baseId) {
+          updatedProd = { ...p, ...updatedFields };
+          return updatedProd;
+        }
+        return p;
+      })
     );
+    if (updatedProd) {
+      saveItemToFirestore(FIRESTORE_COLLECTIONS.PRODUCTS, updatedProd).catch(console.error);
+    }
   };
 
   const deleteProduct = (id: string) => {
@@ -1161,6 +1457,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
       setSelectedProductId(null);
       setActiveTab('inventory');
     }
+    deleteItemFromFirestore(FIRESTORE_COLLECTIONS.PRODUCTS, baseId).catch(console.error);
   };
 
   // Positions CRUD
@@ -1169,42 +1466,77 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
       position,
       ...prev.filter((pos) => pos.id !== position.id),
     ]);
+    saveItemToFirestore(FIRESTORE_COLLECTIONS.POSITIONS, position).catch(console.error);
   };
 
   const updatePosition = (id: string, updatedFields: Partial<WarehousePosition>) => {
+    let updatedPos: WarehousePosition | null = null;
     setPositions((prev) =>
-      prev.map((pos) => (pos.id === id ? { ...pos, ...updatedFields } : pos))
+      prev.map((pos) => {
+        if (pos.id === id) {
+          updatedPos = { ...pos, ...updatedFields };
+          return updatedPos;
+        }
+        return pos;
+      })
     );
+    if (updatedPos) {
+      saveItemToFirestore(FIRESTORE_COLLECTIONS.POSITIONS, updatedPos).catch(console.error);
+    }
   };
 
   const deletePosition = (id: string) => {
     setPositions((prev) => prev.filter((pos) => pos.id !== id));
+    deleteItemFromFirestore(FIRESTORE_COLLECTIONS.POSITIONS, id).catch(console.error);
   };
 
   // Inventory Transactions CRUD
   const addInventoryRecord = (record: InventoryRecord) => {
     setInventory((prev) => [record, ...prev]);
+    saveItemToFirestore(FIRESTORE_COLLECTIONS.INVENTORY, record).catch(console.error);
   };
 
   const updateInventoryRecord = (id: string, updatedFields: Partial<InventoryRecord>) => {
+    let updatedRec: InventoryRecord | null = null;
     setInventory((prev) =>
-      prev.map((rec) => (rec.id === id ? { ...rec, ...updatedFields } : rec))
+      prev.map((rec) => {
+        if (rec.id === id) {
+          updatedRec = { ...rec, ...updatedFields };
+          return updatedRec;
+        }
+        return rec;
+      })
     );
+    if (updatedRec) {
+      saveItemToFirestore(FIRESTORE_COLLECTIONS.INVENTORY, updatedRec).catch(console.error);
+    }
   };
 
   const deleteInventoryRecord = (id: string) => {
     setInventory((prev) => prev.filter((rec) => rec.id !== id));
+    deleteItemFromFirestore(FIRESTORE_COLLECTIONS.INVENTORY, id).catch(console.error);
   };
 
   // Inspections CRUD
   const addInspection = (inspection: Inspection) => {
     setInspections((prev) => [inspection, ...prev.filter((i) => i.id !== inspection.id)]);
+    saveItemToFirestore(FIRESTORE_COLLECTIONS.INSPECTIONS, inspection).catch(console.error);
   };
 
   const updateInspection = (id: string, updatedFields: Partial<Inspection>) => {
+    let updatedInsp: Inspection | null = null;
     setInspections((prev) =>
-      prev.map((insp) => (insp.id === id ? { ...insp, ...updatedFields } : insp))
+      prev.map((insp) => {
+        if (insp.id === id) {
+          updatedInsp = { ...insp, ...updatedFields };
+          return updatedInsp;
+        }
+        return insp;
+      })
     );
+    if (updatedInsp) {
+      saveItemToFirestore(FIRESTORE_COLLECTIONS.INSPECTIONS, updatedInsp).catch(console.error);
+    }
   };
 
   const deleteInspection = (id: string) => {
@@ -1212,6 +1544,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     if (selectedInspectionId === id) {
       setSelectedInspectionId(null);
     }
+    deleteItemFromFirestore(FIRESTORE_COLLECTIONS.INSPECTIONS, id).catch(console.error);
   };
 
   const getNextInspectionId = (): string => {
@@ -1247,15 +1580,24 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
       updatedAt: item.updatedAt || now,
     };
     setKanban((prev) => [withDefaults, ...prev.filter((k) => k.id !== withDefaults.id)]);
+    saveItemToFirestore(FIRESTORE_COLLECTIONS.KANBAN, withDefaults).catch(console.error);
   };
 
   const updateKanbanItem = (id: string, updatedFields: Partial<KanbanItem>) => {
     const now = new Date().toISOString().split('T')[0];
+    let updatedItem: KanbanItem | null = null;
     setKanban((prev) =>
-      prev.map((item) =>
-        item.id === id ? { ...item, ...updatedFields, updatedAt: updatedFields.updatedAt || now } : item
-      )
+      prev.map((item) => {
+        if (item.id === id) {
+          updatedItem = { ...item, ...updatedFields, updatedAt: updatedFields.updatedAt || now };
+          return updatedItem;
+        }
+        return item;
+      })
     );
+    if (updatedItem) {
+      saveItemToFirestore(FIRESTORE_COLLECTIONS.KANBAN, updatedItem).catch(console.error);
+    }
   };
 
   const deleteKanbanItem = (id: string) => {
@@ -1263,6 +1605,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     if (selectedKanbanId === id) {
       setSelectedKanbanId(null);
     }
+    deleteItemFromFirestore(FIRESTORE_COLLECTIONS.KANBAN, id).catch(console.error);
   };
 
   const moveKanbanItem = (id: string, newStatus: KanbanStatus | string) => {
@@ -1278,6 +1621,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     } catch {
       // ignore
     }
+    clearFirestoreCollection(FIRESTORE_COLLECTIONS.KANBAN).catch(console.error);
   };
 
   const getNextKanbanId = (): string => {
@@ -1289,6 +1633,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
   // KonSar CRUD & Helpers
   const addKonSarRelation = (relation: KonSarRelation) => {
     setKonSar((prev) => [relation, ...prev.filter((r) => r.id !== relation.id)]);
+    saveItemToFirestore(FIRESTORE_COLLECTIONS.KONSAR, relation).catch(console.error);
   };
 
   const deleteKonSarRelation = (id: string) => {
@@ -1296,6 +1641,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     if (selectedKonSarId === id) {
       setSelectedKonSarId(null);
     }
+    deleteItemFromFirestore(FIRESTORE_COLLECTIONS.KONSAR, id).catch(console.error);
   };
 
   const getNextKonSarId = (): string => {
@@ -1385,6 +1731,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
   // TermMerod CRUD & Helpers
   const addTermMerodRelation = (relation: TermMerodRelation) => {
     setTermMerod((prev) => [relation, ...prev.filter((r) => r.id !== relation.id)]);
+    saveItemToFirestore(FIRESTORE_COLLECTIONS.TERMMEROD, relation).catch(console.error);
   };
 
   const deleteTermMerodRelation = (id: string) => {
@@ -1392,6 +1739,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     if (selectedTermMerodId === id) {
       setSelectedTermMerodId(null);
     }
+    deleteItemFromFirestore(FIRESTORE_COLLECTIONS.TERMMEROD, id).catch(console.error);
   };
 
   const getNextTermMerodId = (): string => {
@@ -1501,6 +1849,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
   // Beépülő Alkatrész CRUD & Helpers
   const addBeepuloRelation = (relation: BeepuloRelation) => {
     setBeepulo((prev) => [relation, ...prev.filter((r) => r.id !== relation.id)]);
+    saveItemToFirestore(FIRESTORE_COLLECTIONS.BEEPULO, relation).catch(console.error);
   };
 
   const deleteBeepuloRelation = (id: string) => {
@@ -1508,6 +1857,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     if (selectedBeepuloId === id) {
       setSelectedBeepuloId(null);
     }
+    deleteItemFromFirestore(FIRESTORE_COLLECTIONS.BEEPULO, id).catch(console.error);
   };
 
   const getNextBeepuloId = (): string => {
@@ -1601,6 +1951,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
   // FejSaru CRUD & Helpers
   const addFejSaruRelation = (relation: FejSaruRelation) => {
     setFejSaru((prev) => [relation, ...prev.filter((r) => r.id !== relation.id)]);
+    saveItemToFirestore(FIRESTORE_COLLECTIONS.FEJSARU, relation).catch(console.error);
   };
 
   const deleteFejSaruRelation = (id: string) => {
@@ -1608,6 +1959,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     if (selectedFejSaruId === id) {
       setSelectedFejSaruId(null);
     }
+    deleteItemFromFirestore(FIRESTORE_COLLECTIONS.FEJSARU, id).catch(console.error);
   };
 
   const getNextFejSaruId = (): string => {
@@ -2199,6 +2551,15 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         importFejSaruCsvText,
         exportSaruSpecsCsv,
         importSaruSpecsCsvText,
+        isFirebaseConnected,
+        isFirebaseLoading,
+        firebaseError,
+        firebaseSyncTime,
+        firebaseStats,
+        migrateToFirebase,
+        refreshFromFirebase,
+        exportFullBackupJson,
+        importFullBackupJson,
         addProduct,
         updateProduct,
         deleteProduct,

@@ -20,6 +20,9 @@ import {
   Puzzle,
   Zap,
   Kanban as KanbanIcon,
+  Database,
+  Flame,
+  HardDrive,
 } from 'lucide-react';
 
 interface GoogleSheetsSyncModalProps {
@@ -65,6 +68,16 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
     termMerod,
     beepulo,
     fejSaru,
+    saruSpecs,
+    isFirebaseConnected,
+    isFirebaseLoading,
+    firebaseError,
+    firebaseSyncTime,
+    firebaseStats,
+    migrateToFirebase,
+    refreshFromFirebase,
+    exportFullBackupJson,
+    importFullBackupJson,
   } = useProducts();
 
   const [customUrl, setCustomUrl] = useState(sheetUrl);
@@ -72,15 +85,76 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
   const [pasteTarget, setPasteTarget] = useState<'products' | 'positions' | 'inventory' | 'inspections' | 'kanban' | 'konsar' | 'termmerod' | 'beepulo' | 'fejsaru'>('products');
   const [importResult, setImportResult] = useState<string | null>(null);
   const [copiedClipboard, setCopiedClipboard] = useState(false);
-  const [activeSubTab, setActiveSubTab] = useState<'live' | 'file' | 'paste' | 'columns'>('live');
+  const [activeSubTab, setActiveSubTab] = useState<'live' | 'file' | 'paste' | 'columns' | 'firebase'>('firebase');
   const [exportSheetType, setExportSheetType] = useState<'products' | 'positions' | 'inventory' | 'inspections' | 'kanban' | 'konsar' | 'termmerod' | 'beepulo' | 'fejsaru'>('products');
+  const [isFirebaseActionLoading, setIsFirebaseActionLoading] = useState(false);
 
   if (!isOpen) return null;
 
   const handleLiveSync = async () => {
     setSheetUrl(customUrl);
     await syncWithGoogleSheet(customUrl);
-    setImportResult('A szinkronizáció sikeresen lezajlott a Google Táblázat összes munkalapjáról (Productions, Positions, Inventory Transactions, Inspections, Kanban, KonSar, TermMerod, Beépülő alkatrész, FejSaru).');
+    setImportResult('A szinkronizáció sikeresen lezajlott a Google Táblázat összes munkalapjáról és automatikusan el lett mentve a Firebase Firestore-ba!');
+  };
+
+  const handleFirebaseRefresh = async () => {
+    try {
+      setIsFirebaseActionLoading(true);
+      await refreshFromFirebase();
+      setImportResult('A Firebase Firestore adatbázisból a legfrissebb adatok sikeresen be lettek töltve!');
+    } catch (err: unknown) {
+      setImportResult(`Hiba történt a Firebase frissítéskor: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsFirebaseActionLoading(false);
+    }
+  };
+
+  const handleFirebaseMigrate = async () => {
+    try {
+      setIsFirebaseActionLoading(true);
+      const res = await migrateToFirebase();
+      const total = Object.values(res.stats).reduce((a, b) => a + b, 0);
+      setImportResult(`Sikeres szinkronizáció a Firebase Firestore felhőbe! Összesen ${total} tétel mentve.`);
+    } catch (err: unknown) {
+      setImportResult(`Hiba történt a Firebase mentéskor: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsFirebaseActionLoading(false);
+    }
+  };
+
+  const handleDownloadFullBackup = () => {
+    const jsonString = exportFullBackupJson();
+    const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `kinetic_full_database_backup_${new Date().toISOString().slice(0, 10)}.json`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setImportResult('Teljes adatbázis biztonsági mentés sikeresen letöltve (JSON formátumban)!');
+  };
+
+  const handleFullBackupUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const text = event.target?.result as string;
+      if (text) {
+        try {
+          setIsFirebaseActionLoading(true);
+          const res = await importFullBackupJson(text);
+          setImportResult(`Sikeresen visszatöltve a teljes adatbázis mentés! (${res.count} rekord frissítve a Firebase Firestore-ban).`);
+        } catch (err: unknown) {
+          setImportResult(`Hiba a JSON mentés beolvasásakor: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+          setIsFirebaseActionLoading(false);
+        }
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, targetSheet: 'products' | 'positions' | 'inventory' | 'inspections' | 'kanban' | 'konsar' | 'termmerod' | 'beepulo' | 'fejsaru') => {
@@ -349,6 +423,21 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
         <div className="flex border-b border-stone-200 bg-stone-100/70 px-4 text-xs font-semibold gap-2 overflow-x-auto">
           <button
             type="button"
+            id="tab-firebase-btn"
+            onClick={() => setActiveSubTab('firebase')}
+            className={`py-2.5 px-3 border-b-2 whitespace-nowrap transition-colors cursor-pointer flex items-center gap-1.5 ${
+              activeSubTab === 'firebase'
+                ? 'border-[#006067] text-[#006067] font-bold'
+                : 'border-transparent text-stone-600 hover:text-stone-900'
+            }`}
+          >
+            <Database className="w-3.5 h-3.5 text-[#006067]" />
+            <span>Firebase Adatbázis</span>
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="Élő Firestore felhő" />
+          </button>
+          <button
+            type="button"
+            id="tab-live-btn"
             onClick={() => setActiveSubTab('live')}
             className={`py-2.5 px-3 border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
               activeSubTab === 'live'
@@ -360,6 +449,7 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
           </button>
           <button
             type="button"
+            id="tab-file-btn"
             onClick={() => setActiveSubTab('file')}
             className={`py-2.5 px-3 border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
               activeSubTab === 'file'
@@ -371,6 +461,7 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
           </button>
           <button
             type="button"
+            id="tab-paste-btn"
             onClick={() => setActiveSubTab('paste')}
             className={`py-2.5 px-3 border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
               activeSubTab === 'paste'
@@ -382,6 +473,7 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
           </button>
           <button
             type="button"
+            id="tab-columns-btn"
             onClick={() => setActiveSubTab('columns')}
             className={`py-2.5 px-3 border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
               activeSubTab === 'columns'
@@ -402,12 +494,156 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
             </div>
           )}
 
+          {firebaseError && (
+            <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold">Firebase figyelmeztetés</p>
+                <p className="text-[11px] mt-0.5">{firebaseError}</p>
+              </div>
+            </div>
+          )}
+
           {syncError && (
             <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-2">
               <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
               <div>
                 <p className="font-bold">Szinkronizálási figyelmeztetés</p>
                 <p className="text-[11px] mt-0.5">{syncError}</p>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 0: Firebase Cloud Database */}
+          {activeSubTab === 'firebase' && (
+            <div className="space-y-5">
+              {/* Cloud Status Card */}
+              <div className="p-4 rounded-xl bg-gradient-to-br from-stone-50 to-[#E0E9E8]/40 border border-[#006067]/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-[#006067] text-white flex items-center justify-center flex-shrink-0 shadow-sm">
+                    <Database className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-stone-900 text-sm">Firebase Firestore Adatbázis</span>
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        {isFirebaseConnected ? 'Csatlakozva (Élő felhő)' : 'Inicializálás...'}
+                      </span>
+                    </div>
+                    <p className="text-stone-500 text-[11px] mt-0.5">
+                      {firebaseSyncTime ? `Legutóbbi szinkronizálás: ${firebaseSyncTime}` : 'Valós idejű szinkronizáció aktív'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-end sm:self-center">
+                  <button
+                    type="button"
+                    id="firebase-refresh-btn"
+                    onClick={handleFirebaseRefresh}
+                    disabled={isFirebaseActionLoading || isFirebaseLoading}
+                    className="px-3 py-1.5 rounded-lg border border-stone-300 bg-white hover:bg-stone-50 text-stone-700 font-medium flex items-center gap-1.5 cursor-pointer text-xs disabled:opacity-60 shadow-2xs"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-[#006067] ${isFirebaseActionLoading || isFirebaseLoading ? 'animate-spin' : ''}`} />
+                    <span>Újratöltés</span>
+                  </button>
+                  <button
+                    type="button"
+                    id="firebase-migrate-btn"
+                    onClick={handleFirebaseMigrate}
+                    disabled={isFirebaseActionLoading || isFirebaseLoading}
+                    className="px-3 py-1.5 rounded-lg bg-[#006067] hover:bg-[#00474c] text-white font-medium flex items-center gap-1.5 cursor-pointer text-xs disabled:opacity-60 shadow-xs"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Feltöltés / Mentés</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Collections stats overview */}
+              <div>
+                <h3 className="font-bold text-stone-900 text-xs mb-2">Firestore Kollekciók & Tételek</h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  <div className="p-2.5 rounded-lg bg-white border border-stone-200">
+                    <div className="text-stone-500 text-[10px] uppercase font-bold tracking-wider">Productions (Termékek)</div>
+                    <div className="text-stone-900 font-bold text-base mt-0.5">{(firebaseStats?.products ?? totalCount).toLocaleString('hu-HU')} db</div>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-white border border-stone-200">
+                    <div className="text-stone-500 text-[10px] uppercase font-bold tracking-wider">Positions (Raktári helyek)</div>
+                    <div className="text-stone-900 font-bold text-base mt-0.5">{(firebaseStats?.positions ?? positions.length).toLocaleString('hu-HU')} db</div>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-white border border-stone-200">
+                    <div className="text-stone-500 text-[10px] uppercase font-bold tracking-wider">Inventory (Mozgások)</div>
+                    <div className="text-stone-900 font-bold text-base mt-0.5">{(firebaseStats?.inventory ?? inventory.length).toLocaleString('hu-HU')} db</div>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-white border border-stone-200">
+                    <div className="text-stone-500 text-[10px] uppercase font-bold tracking-wider">Inspections (Karbantartás)</div>
+                    <div className="text-stone-900 font-bold text-base mt-0.5">{(firebaseStats?.inspections ?? inspections.length).toLocaleString('hu-HU')} db</div>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-white border border-stone-200">
+                    <div className="text-stone-500 text-[10px] uppercase font-bold tracking-wider">Kanban Tábla</div>
+                    <div className="text-stone-900 font-bold text-base mt-0.5">{(firebaseStats?.kanban ?? kanban.length).toLocaleString('hu-HU')} db</div>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-white border border-stone-200">
+                    <div className="text-stone-500 text-[10px] uppercase font-bold tracking-wider">KonSar (Konnektor-Saru)</div>
+                    <div className="text-stone-900 font-bold text-base mt-0.5">{(firebaseStats?.konSar ?? konSar.length).toLocaleString('hu-HU')} db</div>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-white border border-stone-200">
+                    <div className="text-stone-500 text-[10px] uppercase font-bold tracking-wider">TermMerod (Termék-Mérődoboz)</div>
+                    <div className="text-stone-900 font-bold text-base mt-0.5">{(firebaseStats?.termMerod ?? termMerod.length).toLocaleString('hu-HU')} db</div>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-white border border-stone-200">
+                    <div className="text-stone-500 text-[10px] uppercase font-bold tracking-wider">Beépülő Alkatrészek</div>
+                    <div className="text-stone-900 font-bold text-base mt-0.5">{(firebaseStats?.beepulo ?? beepulo.length).toLocaleString('hu-HU')} db</div>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-white border border-stone-200">
+                    <div className="text-stone-500 text-[10px] uppercase font-bold tracking-wider">FejSaru (Saruzófej-Saru)</div>
+                    <div className="text-stone-900 font-bold text-base mt-0.5">{(firebaseStats?.fejSaru ?? fejSaru.length).toLocaleString('hu-HU')} db</div>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-white border border-stone-200">
+                    <div className="text-stone-500 text-[10px] uppercase font-bold tracking-wider">Saru Segédtáblázat</div>
+                    <div className="text-stone-900 font-bold text-base mt-0.5">{(firebaseStats?.saruSpecs ?? saruSpecs.length).toLocaleString('hu-HU')} db</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Full Database Backup & Restore Box */}
+              <div className="p-4 rounded-xl border border-stone-200 bg-stone-50/70 space-y-3">
+                <div className="flex items-center gap-2">
+                  <HardDrive className="w-4 h-4 text-[#006067]" />
+                  <span className="font-bold text-stone-900 text-xs">Teljes Adatbázis Biztonsági Mentés & Visszaállítás (JSON)</span>
+                </div>
+                <p className="text-stone-600 text-[11px] leading-relaxed">
+                  A teljes adatbázis – beleértve az összes terméket, raktári pozíciót, tranzakciót, karbantartási jegyzőkönyvet és relációt – egyetlen biztonsági JSON fájlba exportálható, illetve onnan egy kattintással visszaállítható.
+                </p>
+
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    id="full-backup-download-btn"
+                    onClick={handleDownloadFullBackup}
+                    className="px-3 py-2 rounded-lg bg-white border border-stone-300 hover:bg-stone-50 text-stone-800 font-semibold flex items-center gap-1.5 cursor-pointer text-xs shadow-2xs"
+                  >
+                    <Download className="w-3.5 h-3.5 text-[#006067]" />
+                    <span>Teljes Mentés Letöltése (.JSON)</span>
+                  </button>
+
+                  <label
+                    htmlFor="full-backup-upload-input"
+                    className="px-3 py-2 rounded-lg bg-[#006067] hover:bg-[#00474c] text-white font-semibold flex items-center gap-1.5 cursor-pointer text-xs shadow-xs"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Mentés Visszatöltése (.JSON)</span>
+                    <input
+                      id="full-backup-upload-input"
+                      type="file"
+                      accept=".json"
+                      onChange={handleFullBackupUpload}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
               </div>
             </div>
           )}

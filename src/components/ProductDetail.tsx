@@ -7,6 +7,7 @@ import { FilterTag } from './FilterTag';
 import { BarcodeView } from './BarcodeView';
 import { SafeImage } from './SafeImage';
 import { SaruSpecMatrix } from './SaruSpecMatrix';
+import { resolveDriveImageUrl } from '../services/driveImageService';
 import {
   ArrowLeft,
   Printer,
@@ -50,6 +51,8 @@ import {
   AlertCircle,
   ShoppingCart,
   PackageCheck,
+  QrCode,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 interface ProductDetailProps {
@@ -619,6 +622,10 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
     return str !== '' && str !== '-';
   };
 
+  // Resolved product image with Google Drive folder fallback
+  const productImage = p.image || resolveDriveImageUrl(undefined, p.id);
+  const hasImage = hasVal(productImage);
+
   return (
     <div className="w-full max-w-full overflow-hidden space-y-4 sm:space-y-6">
       {/* Top action header bar */}
@@ -854,7 +861,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
 
       {/* Active Kanban Tasks Banner for this product */}
       {productKanbanItems.length > 0 && (
-        <div className="bg-gradient-to-r from-amber-50/90 via-sky-50/70 to-emerald-50/60 border border-amber-200/80 rounded-xl p-3.5 shadow-2xs">
+        <div className="bg-gradient-to-r from-amber-50/90 via-sky-50/70 to-emerald-50/60 border-2 border-amber-400/90 rounded-xl p-3.5 shadow-2xs">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2.5 flex-wrap">
               <div className="w-8 h-8 rounded-lg bg-amber-600 text-white flex items-center justify-center shadow-xs flex-shrink-0">
@@ -872,7 +879,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                     return (
                       <div
                         key={kItem.id}
-                        className="inline-flex items-center gap-1.5 text-xs text-stone-700 bg-white/90 border border-stone-200 px-2.5 py-1 rounded-md shadow-3xs"
+                        className="inline-flex items-center gap-1.5 text-xs text-stone-700 bg-white/90 border border-amber-200 px-2.5 py-1 rounded-md shadow-3xs"
                       >
                         <span className="font-mono text-[11px] font-bold text-[#006067]">{kItem.id}</span>
                         <span className="font-semibold text-stone-800 truncate max-w-[180px]">{kItem.title}</span>
@@ -916,7 +923,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
 
       {/* Active Orders & Connected Orders Banner */}
       {hasAnyOrder && (
-        <div className="bg-gradient-to-r from-sky-50/90 via-teal-50/80 to-emerald-50/70 border border-sky-200/90 rounded-xl p-4 shadow-2xs space-y-3">
+        <div className="bg-gradient-to-r from-sky-50/90 via-teal-50/80 to-emerald-50/70 border-2 border-sky-400/90 rounded-xl p-4 shadow-2xs space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-lg bg-[#006067] text-white flex items-center justify-center shadow-xs flex-shrink-0">
@@ -967,35 +974,35 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                     return (
                       <div
                         key={ord.id || `ord-${idx}`}
-                        className="p-3 sm:p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-stone-50/70 transition-colors text-xs"
+                        className="p-3 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-stone-50/70 transition-colors"
                       >
                         {/* Bal oldal: Sorszám, Cikkszám, Státusz és alatta szépen a Terméknév */}
-                        <div className="flex-1 min-w-0 space-y-1.5">
+                        <div className="flex-1 min-w-0 space-y-2">
                           {/* 1. sor: Sorszám, Cikkszám és Státusz badge */}
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="w-6 h-6 rounded-full bg-stone-100 text-stone-700 font-mono text-xs font-bold flex items-center justify-center border border-stone-200 shrink-0">
+                            <span className="w-6 h-6 rounded-full bg-stone-100 text-stone-700 font-mono text-xs font-bold flex items-center justify-center border border-stone-300 shrink-0">
                               #{idx + 1}
                             </span>
                             <div className="inline-flex items-center gap-1.5 font-mono text-xs text-stone-700 shrink-0">
-                              <span className="text-stone-400">Cikkszám:</span>
+                              <span className="text-stone-400 font-sans">Cikkszám:</span>
                               <strong className="font-bold text-[#006067] text-sm bg-[#E0E9E8]/60 px-2 py-0.5 rounded border border-[#006067]/20">
                                 {ord.termekId}
                               </strong>
                             </div>
-                            <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-bold text-[11px] border ${badge.bg} whitespace-nowrap shrink-0`}>
+                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-bold text-xs border ${badge.bg} shrink-0`}>
                               <span className={`w-1.5 h-1.5 rounded-full ${badge.dot}`}></span>
-                              <Icon className="w-3 h-3 shrink-0" />
+                              <Icon className="w-3.5 h-3.5 shrink-0" />
                               <span>{badge.label}</span>
                             </span>
                           </div>
 
                           {/* 2. sor: Terméknév szépen egymás alatt elrendezve */}
                           {p?.name && (
-                            <div className="flex items-baseline gap-1.5 text-xs pl-8">
-                              <span className="text-stone-400 text-[11px] uppercase font-bold tracking-wider shrink-0">
+                            <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2 text-xs">
+                              <span className="text-stone-400 text-[10px] sm:text-[11px] uppercase font-bold tracking-wider shrink-0">
                                 Terméknév:
                               </span>
-                              <span className="font-semibold text-stone-800 break-words">
+                              <span className="font-semibold text-stone-900 break-words text-xs sm:text-sm">
                                 {p.name}
                               </span>
                             </div>
@@ -1003,29 +1010,29 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                         </div>
 
                         {/* Jobb oldal: 3 egyforma, soha meg nem törő dátum oszlop egymás mellett */}
-                        <div className="bg-stone-50/90 border border-stone-200 rounded-lg p-1.5 shrink-0 w-full md:w-auto md:min-w-[310px] shadow-3xs">
+                        <div className="bg-stone-50/90 border border-stone-200 rounded-lg p-2 shrink-0 w-full md:w-auto md:min-w-[330px] shadow-3xs">
                           <div className="grid grid-cols-3 divide-x divide-stone-200 text-center">
-                            <div className="px-2 py-0.5 flex flex-col items-center justify-center">
-                              <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider">
+                            <div className="px-1.5 sm:px-2 py-0.5 flex flex-col items-center justify-center">
+                              <span className="text-[9px] sm:text-[10px] uppercase font-bold text-stone-400 tracking-wider">
                                 Létrehozva
                               </span>
-                              <span className="text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
+                              <span className="text-[11px] sm:text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
                                 {ord.datum || '—'}
                               </span>
                             </div>
-                            <div className="px-2 py-0.5 flex flex-col items-center justify-center">
-                              <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider">
+                            <div className="px-1.5 sm:px-2 py-0.5 flex flex-col items-center justify-center">
+                              <span className="text-[9px] sm:text-[10px] uppercase font-bold text-stone-400 tracking-wider">
                                 Megrendelve
                               </span>
-                              <span className="text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
+                              <span className="text-[11px] sm:text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
                                 {ord.datumMegrendelve || '—'}
                               </span>
                             </div>
-                            <div className="px-2 py-0.5 flex flex-col items-center justify-center">
-                              <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider">
+                            <div className="px-1.5 sm:px-2 py-0.5 flex flex-col items-center justify-center">
+                              <span className="text-[9px] sm:text-[10px] uppercase font-bold text-stone-400 tracking-wider">
                                 Raktárban
                               </span>
-                              <span className="text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
+                              <span className="text-[11px] sm:text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
                                 {ord.datumRaktarban || '—'}
                               </span>
                             </div>
@@ -1053,10 +1060,10 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                     return (
                       <div
                         key={`rel-ord-${ro.order.id}-${idx}`}
-                        className="p-3 sm:p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-amber-50/40 transition-colors text-xs"
+                        className="p-3 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-amber-50/40 transition-colors"
                       >
                         {/* Bal oldal: Sorszám, Kapcsolat típus, Cikkszám gomb, Státusz és alatta szépen a Terméknév */}
-                        <div className="flex-1 min-w-0 space-y-1.5">
+                        <div className="flex-1 min-w-0 space-y-2">
                           {/* 1. sor: Sorszám, Típus, Cikkszám és Státusz badge */}
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 font-mono text-xs font-bold flex items-center justify-center border border-amber-300 shrink-0">
@@ -1064,13 +1071,13 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                             </span>
                             
                             {ro.relationType && (
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100/90 text-amber-900 border border-amber-300/80 shrink-0">
+                              <span className="text-[10px] sm:text-[11px] font-bold px-2 py-0.5 rounded bg-amber-100/90 text-amber-900 border border-amber-300/80 shrink-0">
                                 {ro.relationType}
                               </span>
                             )}
 
                             <div className="inline-flex items-center gap-1.5 font-mono text-xs text-stone-700 shrink-0">
-                              <span className="text-stone-400">Cikkszám:</span>
+                              <span className="text-stone-400 font-sans">Cikkszám:</span>
                               <button
                                 type="button"
                                 onClick={() => selectProductById(ro.relatedProductId)}
@@ -1081,20 +1088,20 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                               </button>
                             </div>
 
-                            <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-bold text-[11px] border ${relBadge.bg} whitespace-nowrap shrink-0`}>
+                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-bold text-xs border ${relBadge.bg} shrink-0`}>
                               <span className={`w-1.5 h-1.5 rounded-full ${relBadge.dot}`}></span>
-                              <RelIcon className="w-3 h-3 shrink-0" />
+                              <RelIcon className="w-3.5 h-3.5 shrink-0" />
                               <span>{relBadge.label}</span>
                             </span>
                           </div>
 
                           {/* 2. sor: Terméknév szépen egymás alatt elrendezve */}
                           {ro.relatedProduct?.name && (
-                            <div className="flex items-baseline gap-1.5 text-xs pl-8">
-                              <span className="text-stone-400 text-[11px] uppercase font-bold tracking-wider shrink-0">
+                            <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2 text-xs">
+                              <span className="text-stone-400 text-[10px] sm:text-[11px] uppercase font-bold tracking-wider shrink-0">
                                 Terméknév:
                               </span>
-                              <span className="font-semibold text-stone-800 break-words" title={ro.relatedProduct.name}>
+                              <span className="font-semibold text-stone-900 break-words text-xs sm:text-sm" title={ro.relatedProduct.name}>
                                 {ro.relatedProduct.name}
                               </span>
                             </div>
@@ -1102,29 +1109,29 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                         </div>
 
                         {/* Jobb oldal: 3 egyforma, soha meg nem törő dátum oszlop egymás mellett */}
-                        <div className="bg-amber-50/50 border border-amber-200/70 rounded-lg p-1.5 shrink-0 w-full md:w-auto md:min-w-[310px] shadow-3xs">
+                        <div className="bg-amber-50/50 border border-amber-200/70 rounded-lg p-2 shrink-0 w-full md:w-auto md:min-w-[330px] shadow-3xs">
                           <div className="grid grid-cols-3 divide-x divide-amber-200/80 text-center">
-                            <div className="px-2 py-0.5 flex flex-col items-center justify-center">
-                              <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider">
+                            <div className="px-1.5 sm:px-2 py-0.5 flex flex-col items-center justify-center">
+                              <span className="text-[9px] sm:text-[10px] uppercase font-bold text-stone-400 tracking-wider">
                                 Létrehozva
                               </span>
-                              <span className="text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
+                              <span className="text-[11px] sm:text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
                                 {ro.order.datum || '—'}
                               </span>
                             </div>
-                            <div className="px-2 py-0.5 flex flex-col items-center justify-center">
-                              <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider">
+                            <div className="px-1.5 sm:px-2 py-0.5 flex flex-col items-center justify-center">
+                              <span className="text-[9px] sm:text-[10px] uppercase font-bold text-stone-400 tracking-wider">
                                 Megrendelve
                               </span>
-                              <span className="text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
+                              <span className="text-[11px] sm:text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
                                 {ro.order.datumMegrendelve || '—'}
                               </span>
                             </div>
-                            <div className="px-2 py-0.5 flex flex-col items-center justify-center">
-                              <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider">
+                            <div className="px-1.5 sm:px-2 py-0.5 flex flex-col items-center justify-center">
+                              <span className="text-[9px] sm:text-[10px] uppercase font-bold text-stone-400 tracking-wider">
                                 Raktárban
                               </span>
-                              <span className="text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
+                              <span className="text-[11px] sm:text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
                                 {ro.order.datumRaktarban || '—'}
                               </span>
                             </div>
@@ -1145,12 +1152,13 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
         {/* Left Column: Image & Barcode Info */}
         <div className="space-y-6">
           {/* Product Image Card (only rendered or placeholder shown) */}
-          <div className="bg-white rounded-xl border border-stone-200 overflow-hidden shadow-2xs">
-            <div className="p-4 border-b border-stone-100 flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-stone-500">
+          <div className="bg-white rounded-xl border-2 border-slate-300 overflow-hidden shadow-2xs">
+            <div className="p-3.5 border-b border-slate-200 bg-slate-50/80 flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                <ImageIcon className="w-3.5 h-3.5 text-slate-500" />
                 Termék Kép / Fotó
               </span>
-              {hasVal(p.image) && (
+              {hasImage && (
                 <button
                   type="button"
                   onClick={() => setShowImageModal(true)}
@@ -1163,19 +1171,20 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
             </div>
 
             <div className="p-4 flex items-center justify-center min-h-[220px] bg-stone-50">
-              {hasVal(p.image) ? (
+              {hasImage ? (
                 <div
                   className="relative group cursor-pointer overflow-hidden rounded-lg border border-stone-200 bg-white"
                   onClick={() => setShowImageModal(true)}
                 >
                   <SafeImage
-                    src={p.image}
+                    src={productImage}
+                    productId={p.id}
                     alt={p.name}
                     className="max-h-[260px] w-auto object-contain mx-auto transition-transform group-hover:scale-105"
                     fallback={
                       <div className="py-12 px-6 text-center text-stone-400">
                         <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-stone-100 flex items-center justify-center text-stone-400 font-mono text-xs">IMG</div>
-                        <p className="text-xs font-medium text-stone-600 break-all">{p.image}</p>
+                        <p className="text-xs font-medium text-stone-600 break-all">{productImage}</p>
                         <p className="text-[11px] text-stone-400 mt-1">Helyi vagy külső kép hivatkozás</p>
                       </div>
                     }
@@ -1200,10 +1209,13 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
           </div>
 
           {/* Barcode & Identification Card */}
-          <div className="bg-white rounded-xl border border-stone-200 p-5 shadow-2xs space-y-4">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-stone-500">
-              Azonosító Vonalkód
-            </h3>
+          <div className="bg-white rounded-xl border-2 border-slate-300 p-5 shadow-2xs space-y-4">
+            <div className="border-b border-slate-200 pb-3 flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                <QrCode className="w-3.5 h-3.5 text-slate-500" />
+                Azonosító Vonalkód
+              </h3>
+            </div>
             <div className="flex justify-center py-2 bg-stone-50 rounded-lg border border-stone-100">
               <BarcodeView value={p.id} height={46} showText={true} />
             </div>
@@ -1225,8 +1237,8 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
         {/* Middle & Right Column: Dynamic Műszaki Adatlap (Strictly hiding empty fields!) */}
         <div className="lg:col-span-2 space-y-6">
           {/* Primary Specification Card */}
-          <div className="bg-white rounded-xl border border-stone-200 p-6 shadow-2xs space-y-6">
-            <div className="border-b border-stone-100 pb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="bg-white rounded-xl border-2 border-teal-500/35 p-6 shadow-2xs space-y-6">
+            <div className="border-b border-teal-100 pb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <span className="text-[10px] font-bold uppercase tracking-widest text-[#006067] bg-[#E0E9E8] px-2 py-0.5 rounded">
                   Műszaki Adatlap
@@ -1452,14 +1464,14 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
       {/* Full-width lower sections container */}
       <div className="space-y-6">
         {/* Warehouse Positions & Stock Section (Positions & Inventory) - Teljes szélességű kártya (Full Width) */}
-        <div className="bg-white rounded-xl border border-stone-200 p-5 sm:p-6 shadow-2xs space-y-4">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-stone-100 pb-4">
+        <div className="bg-white rounded-xl border-2 border-emerald-400 p-5 sm:p-6 shadow-2xs space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-emerald-100 pb-4">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-[#E0E9E8] flex items-center justify-center text-[#006067] shadow-3xs flex-shrink-0">
+              <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-800 shadow-3xs flex-shrink-0">
                 <Boxes className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-stone-900">
+                <h3 className="text-base font-bold text-emerald-950">
                   Raktári Pozíciók
                 </h3>
               </div>
@@ -1622,16 +1634,16 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
               return null;
             }
             return (
-              <div className="bg-white rounded-xl border border-stone-200 p-5 shadow-2xs space-y-3">
-                <div className="flex items-center justify-between border-b border-stone-100 pb-3">
+              <div className="bg-white rounded-xl border-2 border-purple-300 p-5 shadow-2xs space-y-3">
+                <div className="flex items-center justify-between border-b border-purple-100 pb-3">
                   <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-[#006067]/10 flex items-center justify-center text-[#006067]">
+                    <div className="w-8 h-8 rounded-lg bg-purple-100 border border-purple-200 flex items-center justify-center text-purple-700">
                       <ClipboardList className="w-4 h-4" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-bold text-stone-900 flex items-center gap-2">
+                      <h3 className="text-sm font-bold text-purple-950 flex items-center gap-2">
                         Karbantartási Napló
-                        <span className="text-[11px] font-semibold bg-stone-100 text-stone-700 px-2 py-0.5 rounded-full">
+                        <span className="text-[11px] font-semibold bg-purple-50 text-purple-800 border border-purple-200 px-2 py-0.5 rounded-full">
                           {productInspections.length} bejegyzés
                         </span>
                       </h3>
@@ -1707,18 +1719,18 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
             }
 
             return (
-              <div className="bg-white rounded-xl border border-stone-200 p-5 shadow-2xs space-y-4">
-                <div className="flex items-center justify-between border-b border-stone-100 pb-3">
+              <div className="bg-white rounded-xl border-2 border-sky-400 p-5 shadow-2xs space-y-4">
+                <div className="flex items-center justify-between border-b border-sky-100 pb-3">
                   <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center text-[#006067]">
+                    <div className="w-8 h-8 rounded-lg bg-sky-100 border border-sky-300 flex items-center justify-center text-sky-800">
                       <Link2 className="w-4 h-4" />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-bold text-stone-900">
+                        <h3 className="text-sm font-bold text-sky-950">
                           Konnektor – Saru Kapcsolat
                         </h3>
-                        <span className="text-[11px] font-semibold bg-teal-50 text-[#006067] border border-teal-200 px-2 py-0.5 rounded-full">
+                        <span className="text-[11px] font-semibold bg-sky-50 text-sky-800 border border-sky-200 px-2 py-0.5 rounded-full">
                           {connectedKonSar.length} kapcsolat
                         </span>
                       </div>
@@ -1733,7 +1745,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                       <div
                         key={relation.id ? `${relation.id}-${partnerId}` : `konsar-${partnerId}-${idx}`}
                         onClick={() => selectProductById(partnerId)}
-                        className="p-3.5 bg-stone-50 hover:bg-[#F4F7F6] rounded-xl border border-stone-200 hover:border-[#006067]/40 cursor-pointer transition-all hover:shadow-xs group flex flex-col justify-between"
+                        className="p-3.5 bg-sky-50/25 hover:bg-sky-50/60 rounded-xl border border-sky-200 hover:border-sky-400 cursor-pointer transition-all hover:shadow-xs group flex flex-col justify-between"
                       >
                         <div className="space-y-2.5">
                           {/* Top row: Category badge from table & Prominently highlighted Termék ID */}
@@ -1744,7 +1756,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                               partnerType === 'Konnektor' ? '🔌' : '⚡'
                             )}
 
-                            <div className="inline-flex items-center px-2.5 py-1 rounded-md bg-[#006067]/10 text-[#006067] border border-[#006067]/25 font-mono text-xs font-bold tracking-wide">
+                            <div className="inline-flex items-center px-2.5 py-1 rounded-md bg-sky-100 text-sky-950 border border-sky-300 font-mono text-xs font-bold tracking-wide">
                               <span>{partnerId}</span>
                             </div>
                           </div>
@@ -1753,6 +1765,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                           <div className="flex items-start gap-3">
                             <SafeImage
                               src={partnerProduct?.image}
+                              productId={partnerProduct?.id || partnerId}
                               alt={partnerProduct?.name || partnerId}
                               className="w-12 h-12 object-cover rounded-lg bg-white border border-stone-200 shrink-0"
                               fallback={
@@ -1799,15 +1812,15 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
             }
 
             return (
-              <div className="bg-white rounded-xl border border-stone-200 p-5 shadow-2xs space-y-4">
-                <div className="flex items-center justify-between border-b border-stone-100 pb-3">
+              <div className="bg-white rounded-xl border-2 border-emerald-400 p-5 shadow-2xs space-y-4">
+                <div className="flex items-center justify-between border-b border-emerald-100 pb-3">
                   <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-800">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800">
                       <Gauge className="w-4 h-4" />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-bold text-stone-900">
+                        <h3 className="text-sm font-bold text-emerald-950">
                           Termék – Mérődoboz Kapcsolatok (TermMerod)
                         </h3>
                         <span className="text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-full">
@@ -1828,7 +1841,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                       <div
                         key={relation.id ? `${relation.id}-${partnerId}` : `termmerod-${partnerId}-${idx}`}
                         onClick={() => selectProductById(partnerId)}
-                        className="p-3.5 bg-stone-50 hover:bg-[#F4F7F6] rounded-xl border border-stone-200 hover:border-emerald-700/40 cursor-pointer transition-all hover:shadow-xs group flex flex-col justify-between"
+                        className="p-3.5 bg-emerald-50/25 hover:bg-emerald-50/60 rounded-xl border border-emerald-200 hover:border-emerald-400 cursor-pointer transition-all hover:shadow-xs group flex flex-col justify-between"
                       >
                         <div className="space-y-2.5">
                           {/* Top row: Exact Category badge from table & Prominently highlighted Termék ID */}
@@ -1839,7 +1852,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                               role === 'Mérődoboz' ? '📦' : '🏭'
                             )}
 
-                            <div className="inline-flex items-center px-2.5 py-1 rounded-md bg-emerald-800/10 text-emerald-900 border border-emerald-800/25 font-mono text-xs font-bold tracking-wide">
+                            <div className="inline-flex items-center px-2.5 py-1 rounded-md bg-emerald-100 text-emerald-950 border border-emerald-300 font-mono text-xs font-bold tracking-wide">
                               <span>{partnerId}</span>
                             </div>
                           </div>
@@ -1848,6 +1861,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                           <div className="flex items-start gap-3">
                             <SafeImage
                               src={partnerProduct?.image}
+                              productId={partnerProduct?.id || partnerId}
                               alt={partnerProduct?.name || partnerId}
                               className="w-12 h-12 object-cover rounded-lg bg-white border border-stone-200 shrink-0"
                               fallback={
@@ -1908,15 +1922,15 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
             const parentProducts = connectedBeepulo.filter((item) => item.role === 'Főtermék amibe beépül');
 
             return (
-              <div className="bg-white rounded-xl border border-stone-200 p-5 shadow-2xs space-y-4">
-                <div className="flex items-center justify-between border-b border-stone-100 pb-3">
+              <div className="bg-white rounded-xl border-2 border-indigo-400 p-5 shadow-2xs space-y-4">
+                <div className="flex items-center justify-between border-b border-indigo-100 pb-3">
                   <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-700">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-100 border border-indigo-300 flex items-center justify-center text-indigo-700">
                       <Puzzle className="w-4 h-4" />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-bold text-stone-900">
+                        <h3 className="text-sm font-bold text-indigo-950">
                           Beépülő Alkatrészek
                         </h3>
                         <span className="text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full">
@@ -1942,7 +1956,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                       <div
                         key={relation.id ? `${relation.id}-${partnerId}` : `beepulo-${partnerId}-${idx}`}
                         onClick={() => selectProductById(partnerId)}
-                        className="p-3.5 bg-stone-50 hover:bg-[#F4F7F6] rounded-xl border border-stone-200 hover:border-indigo-600/40 cursor-pointer transition-all hover:shadow-xs group flex flex-col justify-between"
+                        className="p-3.5 bg-indigo-50/25 hover:bg-indigo-50/60 rounded-xl border border-indigo-200 hover:border-indigo-400 cursor-pointer transition-all hover:shadow-xs group flex flex-col justify-between"
                       >
                         <div className="space-y-2.5">
                           {/* Top row: Exact Category badge from table & Prominently highlighted Termék ID */}
@@ -1965,7 +1979,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                             </div>
 
                             {/* Prominent Termék ID */}
-                            <div className="inline-flex items-center px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-900 border border-indigo-200 font-mono text-xs font-bold tracking-wide">
+                            <div className="inline-flex items-center px-2.5 py-1 rounded-md bg-indigo-100 text-indigo-950 border border-indigo-300 font-mono text-xs font-bold tracking-wide">
                               <span>{partnerId}</span>
                             </div>
                           </div>
@@ -1974,6 +1988,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                           <div className="flex items-start gap-3">
                             <SafeImage
                               src={partnerProduct?.image}
+                              productId={partnerProduct?.id || partnerId}
                               alt={partnerProduct?.name || partnerId}
                               className="w-12 h-12 object-cover rounded-lg bg-white border border-stone-200 shrink-0"
                               fallback={
@@ -2081,18 +2096,18 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
             }
 
             return (
-              <div className="bg-white rounded-xl border border-stone-200 p-5 shadow-2xs space-y-4">
-                <div className="flex items-center justify-between border-b border-stone-100 pb-3">
+              <div className="bg-white rounded-xl border-2 border-amber-400 p-5 shadow-2xs space-y-4">
+                <div className="flex items-center justify-between border-b border-amber-100 pb-3">
                   <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center text-[#006067]">
+                    <div className="w-8 h-8 rounded-lg bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-800">
                       <Zap className="w-4 h-4" />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-bold text-stone-900">
+                        <h3 className="text-sm font-bold text-amber-950">
                           Saruzófej – Saru Kapcsolat
                         </h3>
-                        <span className="text-[11px] font-semibold bg-teal-50 text-[#006067] border border-teal-200 px-2 py-0.5 rounded-full">
+                        <span className="text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full">
                           {connectedFejSaru.length} kapcsolat
                         </span>
                       </div>
@@ -2110,7 +2125,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                       <div
                         key={relation.id ? `${relation.id}-${partnerId}` : `fejsaru-${partnerId}-${idx}`}
                         onClick={() => selectProductById(partnerId)}
-                        className="p-3.5 bg-stone-50 hover:bg-[#F4F7F6] rounded-xl border border-stone-200 hover:border-teal-600/40 cursor-pointer transition-all hover:shadow-xs group flex flex-col justify-between"
+                        className="p-3.5 bg-amber-50/25 hover:bg-amber-50/60 rounded-xl border border-amber-200 hover:border-amber-400 cursor-pointer transition-all hover:shadow-xs group flex flex-col justify-between"
                       >
                         <div className="space-y-2.5">
                           {/* Top row: Exact Category badge & Highlighted Termék ID */}
@@ -2119,8 +2134,8 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                               <span
                                 className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border ${
                                   isFej
-                                    ? 'bg-teal-50 text-[#006067] border-teal-200'
-                                    : 'bg-amber-50 text-amber-800 border-amber-200'
+                                    ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                    : 'bg-orange-100 text-orange-900 border-orange-300'
                                 }`}
                               >
                                 <span>{isFej ? '⚡' : '🔌'}</span>
@@ -2129,7 +2144,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                             </div>
 
                             {/* Prominent Termék ID */}
-                            <div className="inline-flex items-center px-2.5 py-1 rounded-md bg-stone-100 text-stone-900 border border-stone-200 font-mono text-xs font-bold tracking-wide">
+                            <div className="inline-flex items-center px-2.5 py-1 rounded-md bg-amber-100 text-amber-950 border border-amber-300 font-mono text-xs font-bold tracking-wide">
                               <span>{partnerId}</span>
                             </div>
                           </div>
@@ -2542,7 +2557,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
       )}
 
       {/* High-res Image Modal */}
-      {showImageModal && hasVal(p.image) && (
+      {showImageModal && hasImage && (
         <div
           className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
           onClick={() => setShowImageModal(false)}
@@ -2566,13 +2581,14 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
             </div>
             <div className="flex items-center justify-center max-h-[70vh] overflow-auto">
               <SafeImage
-                src={p.image}
+                src={productImage}
+                productId={p.id}
                 alt={p.name}
                 className="max-h-[70vh] w-auto object-contain rounded-lg"
                 fallback={
                   <div className="py-16 px-8 text-center text-stone-400">
                     <p className="text-sm font-semibold text-stone-700">A kép nem jeleníthető meg</p>
-                    <p className="text-xs font-mono text-stone-500 mt-1 break-all">{p.image}</p>
+                    <p className="text-xs font-mono text-stone-500 mt-1 break-all">{productImage}</p>
                   </div>
                 }
               />

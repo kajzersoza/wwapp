@@ -16,10 +16,10 @@ export const CategoryDropdown: React.FC<CategoryDropdownProps> = ({
 }) => {
   const {
     categories,
-    products,
     filters,
     toggleFilterItem,
     clearFilterKey,
+    categoryCounts,
   } = useProducts();
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -37,18 +37,6 @@ export const CategoryDropdown: React.FC<CategoryDropdownProps> = ({
 
   const selectedCount = selectedCategories.length;
 
-  // Compute category counts
-  const categoryCounts = React.useMemo(() => {
-    const map: Record<string, number> = {};
-    products.forEach((p) => {
-      if (p.category && p.category.trim()) {
-        const cat = p.category.trim();
-        map[cat] = (map[cat] || 0) + 1;
-      }
-    });
-    return map;
-  }, [products]);
-
   // Close dropdown on click outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -65,12 +53,16 @@ export const CategoryDropdown: React.FC<CategoryDropdownProps> = ({
   }, [isOpen]);
 
   const handleToggleCategory = (cat: string) => {
-    toggleFilterItem('categories', cat);
+    React.startTransition(() => {
+      toggleFilterItem('categories', cat);
+    });
     if (onSelect) onSelect(cat);
   };
 
   const handleClearAll = () => {
-    clearFilterKey('categories');
+    React.startTransition(() => {
+      clearFilterKey('categories');
+    });
   };
 
   // Label calculation
@@ -146,7 +138,8 @@ export const CategoryDropdown: React.FC<CategoryDropdownProps> = ({
                 const palette = getCategoryColor(cat);
 
                 return (
-                  <label
+                  <button
+                    type="button"
                     key={cat}
                     onClick={() => handleToggleCategory(cat)}
                     className={`w-full text-left px-2.5 py-2 rounded-lg text-xs flex items-center justify-between transition-colors cursor-pointer select-none ${
@@ -179,7 +172,7 @@ export const CategoryDropdown: React.FC<CategoryDropdownProps> = ({
                     >
                       {count} db
                     </span>
-                  </label>
+                  </button>
                 );
               })}
 
@@ -260,7 +253,8 @@ export const CategoryDropdown: React.FC<CategoryDropdownProps> = ({
               const palette = getCategoryColor(cat);
 
               return (
-                <label
+                <button
+                  type="button"
                   key={cat}
                   onClick={() => handleToggleCategory(cat)}
                   className={`w-full text-left px-3 py-2.5 rounded-lg text-xs flex items-center justify-between transition-colors cursor-pointer min-h-[40px] select-none ${
@@ -293,7 +287,7 @@ export const CategoryDropdown: React.FC<CategoryDropdownProps> = ({
                   >
                     {count} db
                   </span>
-                </label>
+                </button>
               );
             })}
 

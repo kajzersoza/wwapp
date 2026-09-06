@@ -1128,15 +1128,13 @@ export const KanbanView: React.FC = () => {
                 {selectedProductObj ? (
                   <div className="flex items-center gap-3 bg-white p-2.5 rounded-lg border border-[#006067]/30 shadow-2xs">
                     <div className="w-10 h-10 rounded bg-stone-100 flex items-center justify-center flex-shrink-0 overflow-hidden border border-stone-200">
-                      {selectedProductObj.image ? (
-                        <SafeImage
-                          src={selectedProductObj.image}
-                          alt={selectedProductObj.name}
-                          className="w-full h-full object-contain"
-                        />
-                      ) : (
-                        <Package className="w-5 h-5 text-stone-400" />
-                      )}
+                      <SafeImage
+                        src={selectedProductObj.image}
+                        productId={selectedProductObj.id}
+                        alt={selectedProductObj.name}
+                        className="w-full h-full object-contain"
+                        fallback={<Package className="w-5 h-5 text-stone-400" />}
+                      />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
@@ -1211,12 +1209,14 @@ export const KanbanView: React.FC = () => {
                           onClick={() => handleSelectProduct(prod)}
                           className="p-2.5 flex items-center gap-3 hover:bg-[#E0E9E8]/50 cursor-pointer transition-colors"
                         >
-                          <div className="w-8 h-8 rounded bg-stone-100 flex items-center justify-center flex-shrink-0">
-                            {prod.image ? (
-                              <SafeImage src={prod.image} alt={prod.name} className="w-full h-full object-contain" />
-                            ) : (
-                              <Package className="w-4 h-4 text-stone-400" />
-                            )}
+                          <div className="w-8 h-8 rounded bg-stone-100 flex items-center justify-center flex-shrink-0 overflow-hidden border border-stone-200">
+                            <SafeImage
+                              src={prod.image}
+                              productId={prod.id}
+                              alt={prod.name}
+                              className="w-full h-full object-contain"
+                              fallback={<Package className="w-4 h-4 text-stone-400" />}
+                            />
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">

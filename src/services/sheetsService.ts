@@ -22,17 +22,13 @@ export const DEFAULT_GOOGLE_SHEET_URL =
 export const DEFAULT_GOOGLE_SHEET_CSV_URL =
   'https://docs.google.com/spreadsheets/d/11AeIQrodsaICM3_P6VRQm7bShU5dMfjw/gviz/tq?tqx=out:csv&sheet=Products';
 
+import { resolveDriveImageUrl } from './driveImageService';
+
 /**
- * Normalizes an image url or relative path
+ * Normalizes an image url or relative path using Google Drive mapping
  */
-export function resolveImageUrl(imagePath?: string): string | undefined {
-  if (!imagePath || imagePath.trim() === '') return undefined;
-  const clean = imagePath.trim();
-  if (clean.startsWith('http://') || clean.startsWith('https://') || clean.startsWith('data:image/')) {
-    return clean;
-  }
-  // If it's a relative path from the sheet like "Products_Images/40107.00.33.Image.174934.jpg"
-  return clean;
+export function resolveImageUrl(imagePath?: string, productId?: string): string | undefined {
+  return resolveDriveImageUrl(imagePath, productId);
 }
 
 /**

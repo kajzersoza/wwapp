@@ -229,10 +229,11 @@ export const MultiSelectDropdown: React.FC<MultiSelectDropdownProps> = ({
                 const catPalette = isCategory ? getCategoryColor(option) : null;
 
                 return (
-                  <label
+                  <button
+                    type="button"
                     key={option}
                     onClick={() => onToggle(option)}
-                    className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer transition-colors select-none ${
+                    className={`w-full text-left flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-xs cursor-pointer transition-colors select-none ${
                       isSelected
                         ? 'bg-[#E0E9E8] text-[#006067] font-semibold'
                         : 'hover:bg-stone-50 text-stone-700'
@@ -272,7 +273,7 @@ export const MultiSelectDropdown: React.FC<MultiSelectDropdownProps> = ({
                         {count}
                       </span>
                     )}
-                  </label>
+                  </button>
                 );
               })
             )}

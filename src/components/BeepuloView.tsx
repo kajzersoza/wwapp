@@ -411,7 +411,7 @@ export const BeepuloView: React.FC = () => {
             return (
               <div
                 key={rel.id}
-                className="bg-white rounded-2xl border border-stone-200 p-5 hover:border-indigo-300 transition-all shadow-2xs hover:shadow-xs flex flex-col justify-between"
+                className="bg-white rounded-2xl border-2 border-indigo-300 hover:border-indigo-400 p-5 transition-all shadow-2xs hover:shadow-xs flex flex-col justify-between"
               >
                 {/* Header bar of card */}
                 <div className="flex items-center justify-between gap-2 border-b border-stone-100 pb-3 mb-3">

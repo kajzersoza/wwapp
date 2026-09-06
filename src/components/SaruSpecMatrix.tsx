@@ -38,7 +38,7 @@ export const SaruSpecMatrix: React.FC<SaruSpecMatrixProps> = ({
   const activeCrossSectionsCount = crossSections.filter(hasAnyData).length;
 
   return (
-    <div className="bg-white rounded-2xl border border-stone-200/90 p-4 sm:p-5 md:p-6 shadow-2xs space-y-4">
+    <div className="bg-white rounded-2xl border-2 border-cyan-400 p-4 sm:p-5 md:p-6 shadow-2xs space-y-4">
       {/* 1. Header (SARUMAGASSÁG) */}
       {showHeader && (
         <div className="flex items-center justify-between gap-3">

@@ -371,7 +371,7 @@ export const TermMerodView: React.FC = () => {
       </div>
 
       {/* Main Table */}
-      <div className="bg-white rounded-xl border border-stone-200 shadow-2xs overflow-hidden">
+      <div className="bg-white rounded-xl border-2 border-emerald-300 shadow-2xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>

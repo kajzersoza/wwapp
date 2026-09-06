@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, ReactNode } from 'react';
 import {
   Product,
   WarehousePosition,
@@ -35,6 +35,8 @@ import {
   isUsedProductId,
   getProductConditionInfo,
   calculateProductStockBreakdown,
+  createProductStockMap,
+  getProductStockFromMap,
   getUnifiedProductPositions,
   unifyProductList,
   ProductStockBreakdown,
@@ -115,6 +117,7 @@ interface ProductContextType {
   sheetUrl: string;
   totalCount: number;
   categories: string[];
+  categoryCounts: Record<string, number>;
   manufacturers: string[];
   partTypes: string[];
   insulationTypes: string[];
@@ -1490,10 +1493,19 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
       const updatedList = exists
         ? currentList.filter((item) => item !== value)
         : [...currentList, value];
-      return {
+      
+      const next = {
         ...prev,
         [key]: updatedList,
       };
+
+      if (key === 'categories') next.category = updatedList.length === 1 ? updatedList[0] : '';
+      if (key === 'manufacturers') next.manufacturer = updatedList.length === 1 ? updatedList[0] : '';
+      if (key === 'partTypes') next.partType = updatedList.length === 1 ? updatedList[0] : '';
+      if (key === 'insulationTypes') next.insulationType = updatedList.length === 1 ? updatedList[0] : '';
+      if (key === 'locations') next.location = updatedList.length === 1 ? updatedList[0] : '';
+
+      return next;
     });
   };
 
@@ -2515,22 +2527,27 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     addInventoryRecord(newRecord);
   };
 
-  // Stock Calculation Helpers
-  const getProductStockBreakdown = (productId: string): ProductStockBreakdown => {
-    return calculateProductStockBreakdown(productId, inventory);
-  };
+  // Precomputed fast stock map over inventory (O(1) lookups)
+  const inventoryStockMap = useMemo(() => {
+    return createProductStockMap(inventory);
+  }, [inventory]);
 
-  const getProductTotalStock = (productId: string): number => {
-    return calculateProductStockBreakdown(productId, inventory).totalStock;
-  };
+  // Stock Calculation Helpers - using O(1) map lookups
+  const getProductStockBreakdown = useCallback((productId: string): ProductStockBreakdown => {
+    return getProductStockFromMap(productId, inventoryStockMap);
+  }, [inventoryStockMap]);
 
-  const getProductNewStock = (productId: string): number => {
-    return calculateProductStockBreakdown(productId, inventory).newStock;
-  };
+  const getProductTotalStock = useCallback((productId: string): number => {
+    return getProductStockFromMap(productId, inventoryStockMap).totalStock;
+  }, [inventoryStockMap]);
 
-  const getProductUsedStock = (productId: string): number => {
-    return calculateProductStockBreakdown(productId, inventory).usedStock;
-  };
+  const getProductNewStock = useCallback((productId: string): number => {
+    return getProductStockFromMap(productId, inventoryStockMap).newStock;
+  }, [inventoryStockMap]);
+
+  const getProductUsedStock = useCallback((productId: string): number => {
+    return getProductStockFromMap(productId, inventoryStockMap).usedStock;
+  }, [inventoryStockMap]);
 
   const getUnifiedPositions = (productId: string): UnifiedProductPosition[] => {
     return getUnifiedProductPositions(productId, inventory, positions);
@@ -2639,6 +2656,17 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     return Array.from(set).sort();
   }, [products]);
 
+  const categoryCounts = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (let i = 0; i < products.length; i++) {
+      const cat = products[i].category?.trim();
+      if (cat) {
+        map[cat] = (map[cat] || 0) + 1;
+      }
+    }
+    return map;
+  }, [products]);
+
   const manufacturers = useMemo(() => {
     const set = new Set<string>();
     products.forEach((p) => {
@@ -2675,30 +2703,148 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     return Array.from(set).sort();
   }, [products, positions]);
 
-  // Filtered and Sorted Products
+  // Filtered and Sorted Products - Ultra optimized for instant filtering
   const filteredProducts = useMemo(() => {
+    // 1. Precalculate active filters outside the loop for instant O(1) set lookup
+    const activeCategories =
+      filters.categories && filters.categories.length > 0
+        ? filters.categories
+        : filters.category
+        ? [filters.category]
+        : [];
+    const activeCategoriesSet =
+      activeCategories.length > 0 ? new Set(activeCategories.map((c) => c.trim().toLowerCase())) : null;
+
+    const activeManufacturers =
+      filters.manufacturers && filters.manufacturers.length > 0
+        ? filters.manufacturers
+        : filters.manufacturer
+        ? [filters.manufacturer]
+        : [];
+    const activeManufacturersSet =
+      activeManufacturers.length > 0
+        ? new Set(activeManufacturers.map((m) => m.trim().toLowerCase()))
+        : null;
+
+    const activePartTypes =
+      filters.partTypes && filters.partTypes.length > 0
+        ? filters.partTypes
+        : filters.partType
+        ? [filters.partType]
+        : [];
+    const activePartTypesSet =
+      activePartTypes.length > 0 ? new Set(activePartTypes.map((p) => p.trim().toLowerCase())) : null;
+
+    const activeInsulationTypes =
+      filters.insulationTypes && filters.insulationTypes.length > 0
+        ? filters.insulationTypes
+        : filters.insulationType
+        ? [filters.insulationType]
+        : [];
+    const activeInsulationTypesSet =
+      activeInsulationTypes.length > 0
+        ? new Set(activeInsulationTypes.map((i) => i.trim().toLowerCase()))
+        : null;
+
+    const activeLocations =
+      filters.locations && filters.locations.length > 0
+        ? filters.locations
+        : filters.location
+        ? [filters.location]
+        : [];
+    const activeLocationsSet =
+      activeLocations.length > 0 ? new Set(activeLocations.map((l) => l.trim().toLowerCase())) : null;
+
+    const searchQuery = filters.searchQuery ? filters.searchQuery.toLowerCase().trim() : '';
+    const isSearchActive = Boolean(searchQuery);
+    const isConditionActive = Boolean(filters.conditionFilter && filters.conditionFilter !== 'all');
+    const isSearchKeywordSpecial =
+      isSearchActive &&
+      (searchQuery === 'használt' ||
+        searchQuery === 'hasznalt' ||
+        searchQuery === 'h_' ||
+        searchQuery === 'új' ||
+        searchQuery === 'uj');
+
     return products
       .filter((p) => {
-        const breakdown = calculateProductStockBreakdown(p.id, inventory);
+        // FAST FILTER 1: Categories check first (instant O(1) set lookup)
+        if (
+          activeCategoriesSet &&
+          (!p.category || !activeCategoriesSet.has(p.category.trim().toLowerCase()))
+        ) {
+          return false;
+        }
 
-        if (filters.searchQuery) {
-          const query = filters.searchQuery.toLowerCase().trim();
-          const matchId = p.id.toLowerCase().includes(query);
-          const matchUsedId = `h_${p.id}`.toLowerCase().includes(query);
-          const matchName = p.name.toLowerCase().includes(query);
-          const matchDesc = p.description?.toLowerCase().includes(query) ?? false;
-          const matchFactoryCode = p.factoryCode?.toLowerCase().includes(query) ?? false;
-          const matchCategory = p.category?.toLowerCase().includes(query) ?? false;
-          const matchManufacturer = p.manufacturer?.toLowerCase().includes(query) ?? false;
-          const matchLocation = p.location?.toLowerCase().includes(query) ?? false;
-          const matchPartType = p.partType?.toLowerCase().includes(query) ?? false;
+        // FAST FILTER 2: Other metadata checks (cheap string / set checks)
+        if (
+          activeManufacturersSet &&
+          (!p.manufacturer || !activeManufacturersSet.has(p.manufacturer.trim().toLowerCase()))
+        ) {
+          return false;
+        }
 
-          // Keyword searches like "használt", "hasznalt", "új", "uj"
-          const matchUsedKeyword =
-            (query === 'használt' || query === 'hasznalt' || query === 'h_') &&
-            breakdown.usedStock > 0;
-          const matchNewKeyword =
-            (query === 'új' || query === 'uj') && breakdown.newStock > 0;
+        if (
+          activePartTypesSet &&
+          (!p.partType || !activePartTypesSet.has(p.partType.trim().toLowerCase()))
+        ) {
+          return false;
+        }
+
+        if (
+          activeInsulationTypesSet &&
+          (!p.insulationType || !activeInsulationTypesSet.has(p.insulationType.trim().toLowerCase()))
+        ) {
+          return false;
+        }
+
+        if (
+          activeLocationsSet &&
+          (!p.location || !activeLocationsSet.has(p.location.trim().toLowerCase()))
+        ) {
+          return false;
+        }
+
+        if (
+          filters.insulationGripperType &&
+          p.insulationGripperType !== filters.insulationGripperType
+        ) {
+          return false;
+        }
+        if (filters.quality && p.quality !== filters.quality) {
+          return false;
+        }
+        if (filters.hasImageOnly && !p.image) {
+          return false;
+        }
+
+        // Fast O(1) stock breakdown only when actually needed
+        let breakdown: ProductStockBreakdown | null = null;
+        if (isConditionActive || isSearchKeywordSpecial) {
+          breakdown = getProductStockFromMap(p.id, inventoryStockMap);
+        }
+
+        // Search Query check
+        if (isSearchActive) {
+          const matchId = p.id.toLowerCase().includes(searchQuery);
+          const matchUsedId = `h_${p.id}`.toLowerCase().includes(searchQuery);
+          const matchName = p.name.toLowerCase().includes(searchQuery);
+          const matchDesc = p.description?.toLowerCase().includes(searchQuery) ?? false;
+          const matchFactoryCode = p.factoryCode?.toLowerCase().includes(searchQuery) ?? false;
+          const matchCategory = p.category?.toLowerCase().includes(searchQuery) ?? false;
+          const matchManufacturer = p.manufacturer?.toLowerCase().includes(searchQuery) ?? false;
+          const matchLocation = p.location?.toLowerCase().includes(searchQuery) ?? false;
+          const matchPartType = p.partType?.toLowerCase().includes(searchQuery) ?? false;
+
+          let matchUsedKeyword = false;
+          let matchNewKeyword = false;
+          if (isSearchKeywordSpecial && breakdown) {
+            matchUsedKeyword =
+              (searchQuery === 'használt' || searchQuery === 'hasznalt' || searchQuery === 'h_') &&
+              breakdown.usedStock > 0;
+            matchNewKeyword =
+              (searchQuery === 'új' || searchQuery === 'uj') && breakdown.newStock > 0;
+          }
 
           if (
             !matchId &&
@@ -2718,7 +2864,10 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         }
 
         // Condition Filter check
-        if (filters.conditionFilter && filters.conditionFilter !== 'all') {
+        if (isConditionActive) {
+          if (!breakdown) {
+            breakdown = getProductStockFromMap(p.id, inventoryStockMap);
+          }
           if (filters.conditionFilter === 'new' && breakdown.newStock <= 0) {
             return false;
           }
@@ -2733,76 +2882,6 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
           }
         }
 
-        // Category multi-select check
-        const activeCategories =
-          filters.categories && filters.categories.length > 0
-            ? filters.categories
-            : filters.category
-            ? [filters.category]
-            : [];
-        if (activeCategories.length > 0) {
-          if (!p.category || !activeCategories.includes(p.category.trim())) {
-            return false;
-          }
-        }
-
-        // Manufacturer multi-select check
-        const activeManufacturers =
-          filters.manufacturers && filters.manufacturers.length > 0
-            ? filters.manufacturers
-            : filters.manufacturer
-            ? [filters.manufacturer]
-            : [];
-        if (activeManufacturers.length > 0) {
-          if (!p.manufacturer || !activeManufacturers.includes(p.manufacturer.trim())) {
-            return false;
-          }
-        }
-
-        // Part Type multi-select check
-        const activePartTypes =
-          filters.partTypes && filters.partTypes.length > 0
-            ? filters.partTypes
-            : filters.partType
-            ? [filters.partType]
-            : [];
-        if (activePartTypes.length > 0) {
-          if (!p.partType || !activePartTypes.includes(p.partType.trim())) {
-            return false;
-          }
-        }
-
-        // Insulation Type multi-select check
-        const activeInsulationTypes =
-          filters.insulationTypes && filters.insulationTypes.length > 0
-            ? filters.insulationTypes
-            : filters.insulationType
-            ? [filters.insulationType]
-            : [];
-        if (activeInsulationTypes.length > 0) {
-          if (!p.insulationType || !activeInsulationTypes.includes(p.insulationType.trim())) {
-            return false;
-          }
-        }
-
-        // Location multi-select check
-        const activeLocations =
-          filters.locations && filters.locations.length > 0
-            ? filters.locations
-            : filters.location
-            ? [filters.location]
-            : [];
-        if (activeLocations.length > 0) {
-          if (!p.location || !activeLocations.includes(p.location.trim())) {
-            return false;
-          }
-        }
-
-        if (filters.insulationGripperType && p.insulationGripperType !== filters.insulationGripperType)
-          return false;
-        if (filters.quality && p.quality !== filters.quality) return false;
-        if (filters.hasImageOnly && !p.image) return false;
-
         return true;
       })
       .sort((a, b) => {
@@ -2811,7 +2890,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         const order = filters.sortOrder === 'asc' ? 1 : -1;
         return fieldA.localeCompare(fieldB, 'hu', { numeric: true }) * order;
       });
-  }, [products, filters, inventory]);
+  }, [products, filters, inventoryStockMap]);
 
   return (
     <ProductContext.Provider
@@ -2830,6 +2909,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         sheetUrl,
         totalCount: products.length,
         categories,
+        categoryCounts,
         manufacturers,
         partTypes,
         insulationTypes,

@@ -127,6 +127,83 @@ export function calculateProductStockBreakdown(
 }
 
 /**
+ * Fast precomputed stock map index over all inventory records.
+ * Aggregates all inventory transactions in O(N) single-pass.
+ */
+export function createProductStockMap(
+  inventory: InventoryTransaction[]
+): Map<string, ProductStockBreakdown> {
+  const grouped = new Map<string, { baseId: string; newStock: number; usedStock: number }>();
+
+  for (let i = 0; i < inventory.length; i++) {
+    const rec = inventory[i];
+    const recProdId = (rec.productId || '').trim();
+    if (!recProdId) continue;
+    const baseId = getBaseProductId(recProdId);
+    const key = baseId.toLowerCase();
+    const qty = rec.quantity || 0;
+
+    let entry = grouped.get(key);
+    if (!entry) {
+      entry = { baseId, newStock: 0, usedStock: 0 };
+      grouped.set(key, entry);
+    }
+
+    if (
+      recProdId.toLowerCase() === `h_${key}` ||
+      (isUsedProductId(recProdId) && getBaseProductId(recProdId).toLowerCase() === key)
+    ) {
+      entry.usedStock += qty;
+    } else {
+      entry.newStock += qty;
+    }
+  }
+
+  const result = new Map<string, ProductStockBreakdown>();
+  for (const [key, val] of grouped.entries()) {
+    const totalStock = val.newStock + val.usedStock;
+    result.set(key, {
+      baseId: val.baseId,
+      newId: val.baseId,
+      usedId: `H_${val.baseId}`,
+      newStock: val.newStock,
+      usedStock: val.usedStock,
+      totalStock,
+      hasNewStock: val.newStock > 0,
+      hasUsedStock: val.usedStock > 0,
+      hasAnyStock: totalStock > 0,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Instant O(1) stock breakdown retrieval from precomputed stock map
+ */
+export function getProductStockFromMap(
+  idOrBaseId: string,
+  stockMap: Map<string, ProductStockBreakdown>
+): ProductStockBreakdown {
+  const baseId = getBaseProductId(idOrBaseId);
+  const key = baseId.toLowerCase();
+  const cached = stockMap.get(key);
+  if (cached) return cached;
+
+  return {
+    baseId,
+    newId: baseId,
+    usedId: `H_${baseId}`,
+    newStock: 0,
+    usedStock: 0,
+    totalStock: 0,
+    hasNewStock: false,
+    hasUsedStock: false,
+    hasAnyStock: false,
+  };
+}
+
+/**
  * Unified product position info with condition tag
  */
 export interface UnifiedProductPosition {

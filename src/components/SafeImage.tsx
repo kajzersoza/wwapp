@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { resolveDriveImageUrl } from '../services/driveImageService';
 
-interface SafeImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
+export interface SafeImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
   fallback?: React.ReactNode;
   containerClassName?: string;
+  productId?: string;
 }
 
 export const SafeImage: React.FC<SafeImageProps> = ({
@@ -10,16 +12,19 @@ export const SafeImage: React.FC<SafeImageProps> = ({
   alt = '',
   className = '',
   containerClassName = '',
+  productId,
   fallback,
   ...props
 }) => {
   const [hasError, setHasError] = useState(false);
 
+  const resolvedSrc = resolveDriveImageUrl(src, productId);
+
   useEffect(() => {
     setHasError(false);
-  }, [src]);
+  }, [resolvedSrc]);
 
-  if (!src || hasError) {
+  if (!resolvedSrc || hasError) {
     if (fallback) {
       return <>{fallback}</>;
     }
@@ -28,7 +33,7 @@ export const SafeImage: React.FC<SafeImageProps> = ({
 
   return (
     <img
-      src={src}
+      src={resolvedSrc}
       alt={alt}
       className={className}
       referrerPolicy="no-referrer"
@@ -39,3 +44,4 @@ export const SafeImage: React.FC<SafeImageProps> = ({
     />
   );
 };
+

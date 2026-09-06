@@ -794,6 +794,7 @@ export const RendelesView: React.FC<RendelesViewProps> = ({ onOpenSyncModal }) =
                                   <div className="flex items-center gap-2">
                                     <SafeImage
                                       src={relProd?.image}
+                                      productId={relItem.id}
                                       alt={relProd?.name || relItem.id}
                                       className="w-10 h-10 object-cover rounded bg-white border border-stone-200 shrink-0"
                                       fallback={
@@ -992,79 +993,91 @@ export const RendelesView: React.FC<RendelesViewProps> = ({ onOpenSyncModal }) =
                                   </span>
                                 </div>
 
-                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                                  {relatedProducts.map((relItem) => {
+                                <div className="bg-white rounded-xl border border-amber-200 overflow-hidden divide-y divide-amber-100 shadow-3xs">
+                                  {relatedProducts.map((relItem, relIdx) => {
                                     const relProd = relItem.product || getProduct(relItem.id);
                                     const relOrders = getProductOrders(relItem.id);
                                     const relStock = getProductStockBreakdown(relItem.id);
+                                    const latestOrder = relOrders.length > 0 ? relOrders[0] : null;
 
                                     return (
                                       <div
                                         key={relItem.id}
                                         onClick={() => selectProductById(relItem.id)}
-                                        className="p-3 bg-stone-50 hover:bg-white rounded-xl border border-stone-200 hover:border-[#006067] cursor-pointer transition-all hover:shadow-xs group flex flex-col justify-between"
+                                        className="p-3 sm:p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-amber-50/40 cursor-pointer transition-colors group"
                                       >
-                                        <div className="space-y-2">
-                                          <div className="flex items-center justify-between gap-1 flex-wrap">
-                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-200">
-                                              {relItem.relationType}
-                                            </span>
+                                        {/* Bal oldal: Sorszám, Kép, Kapcsolat típus, Cikkszám, Terméknév, Kategória */}
+                                        <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
+                                          <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 font-mono text-xs font-bold flex items-center justify-center border border-amber-300 shrink-0">
+                                            #{relIdx + 1}
+                                          </span>
 
-                                            <div className="inline-flex items-center px-2 py-0.5 rounded bg-[#006067]/10 text-[#006067] font-mono font-bold text-xs">
-                                              <span>{relItem.id}</span>
-                                            </div>
-                                          </div>
+                                          <SafeImage
+                                            src={relProd?.image}
+                                            productId={relItem.id}
+                                            alt={relProd?.name || relItem.id}
+                                            className="w-11 h-11 object-cover rounded-lg bg-white border border-stone-200 shrink-0 shadow-3xs"
+                                            fallback={
+                                              <div className="w-11 h-11 rounded-lg bg-stone-100 border border-stone-200 flex items-center justify-center text-stone-400 shrink-0">
+                                                <Link2 className="w-4 h-4" />
+                                              </div>
+                                            }
+                                          />
 
-                                          <div className="flex items-start gap-2.5">
-                                            <SafeImage
-                                              src={relProd?.image}
-                                              alt={relProd?.name || relItem.id}
-                                              className="w-10 h-10 object-cover rounded-lg bg-white border border-stone-200 shrink-0"
-                                              fallback={
-                                                <div className="w-10 h-10 rounded-lg bg-stone-200/70 border border-stone-300 flex items-center justify-center text-stone-400 shrink-0">
-                                                  <Link2 className="w-4 h-4" />
-                                                </div>
-                                              }
-                                            />
+                                          <div className="min-w-0 flex-1 space-y-1">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-200">
+                                                {relItem.relationType}
+                                              </span>
 
-                                            <div className="min-w-0 flex-1">
-                                              <p className="text-xs font-bold text-stone-900 group-hover:text-[#006067] transition-colors truncate">
-                                                {relProd?.name || relItem.id}
-                                              </p>
+                                              <span className="font-mono font-bold text-xs text-[#006067] bg-[#E0E9E8]/60 px-2 py-0.5 rounded border border-[#006067]/20">
+                                                {relItem.id}
+                                              </span>
 
                                               {relProd?.category && (
-                                                <p className="text-[10px] text-stone-500 truncate">
-                                                  {relProd.category}
-                                                </p>
-                                              )}
-
-                                              <div className="text-[10px] text-stone-600 mt-1">
-                                                <span>Készlet: </span>
-                                                <span className="font-bold font-mono text-stone-800">
-                                                  {relStock.totalStock} db
+                                                <span className="text-[11px] text-stone-500 font-medium hidden sm:inline">
+                                                  • {relProd.category}
                                                 </span>
-                                                {relStock.newStock > 0 && (
-                                                  <span className="text-emerald-700 ml-1">
-                                                    ({relStock.newStock} új)
-                                                  </span>
-                                                )}
-                                              </div>
+                                              )}
                                             </div>
+
+                                            <p className="text-xs font-bold text-stone-900 group-hover:text-[#006067] transition-colors break-words">
+                                              {relProd?.name || relItem.id}
+                                            </p>
                                           </div>
                                         </div>
 
-                                        {/* Relationship order status if this partner also has order */}
-                                        <div className="mt-2 pt-2 border-t border-stone-100 flex items-center justify-between text-[10px]">
-                                          {relOrders.length > 0 ? (
-                                            getStatusBadge(relOrders[0].statusz)
+                                        {/* Jobb oldal: Készlet és Rendelési státusz */}
+                                        <div className="flex flex-wrap items-center gap-2.5 sm:gap-4 shrink-0 justify-between md:justify-end border-t md:border-t-0 pt-2 md:pt-0 border-amber-100">
+                                          <div className="text-xs bg-stone-50 border border-stone-200 px-2.5 py-1 rounded-lg">
+                                            <span className="text-stone-500 text-[11px]">Készlet: </span>
+                                            <strong className="font-mono font-bold text-stone-800">{relStock.totalStock} db</strong>
+                                            {relStock.newStock > 0 && (
+                                              <span className="text-emerald-700 ml-1 font-semibold text-[11px]">
+                                                ({relStock.newStock} új)
+                                              </span>
+                                            )}
+                                          </div>
+
+                                          {latestOrder ? (
+                                            <div className="flex items-center gap-2">
+                                              {getStatusBadge(latestOrder.statusz)}
+                                              {(latestOrder.datumMegrendelve || latestOrder.datum) && (
+                                                <span className="text-[11px] font-mono text-stone-500 hidden sm:inline">
+                                                  {latestOrder.datumMegrendelve || latestOrder.datum}
+                                                </span>
+                                              )}
+                                            </div>
                                           ) : (
-                                            <span className="text-stone-400">Nincs közvetlen rendelés</span>
+                                            <span className="text-[11px] text-stone-400 bg-stone-100 px-2 py-0.5 rounded border border-stone-200">
+                                              Nincs közvetlen rendelés
+                                            </span>
                                           )}
 
-                                          <span className="text-[#006067] group-hover:underline font-semibold flex items-center gap-0.5">
+                                          <div className="inline-flex items-center gap-1 text-[#006067] group-hover:underline text-xs font-bold ml-1">
                                             <span>Adatlap</span>
-                                            <ExternalLink className="w-2.5 h-2.5" />
-                                          </span>
+                                            <ExternalLink className="w-3.5 h-3.5" />
+                                          </div>
                                         </div>
                                       </div>
                                     );

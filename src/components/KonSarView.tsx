@@ -362,7 +362,7 @@ export const KonSarView: React.FC = () => {
       </div>
 
       {/* Main Table */}
-      <div className="bg-white rounded-xl border border-stone-200 shadow-2xs overflow-hidden">
+      <div className="bg-white rounded-xl border-2 border-sky-300 shadow-2xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
@@ -412,6 +412,7 @@ export const KonSarView: React.FC = () => {
                         <div className="flex items-center gap-3">
                           <SafeImage
                             src={prod1?.image}
+                            productId={prod1?.id || p1}
                             alt={prod1?.name || p1}
                             className="w-9 h-9 object-cover rounded bg-white border border-stone-200 flex-shrink-0"
                             fallback={
@@ -458,6 +459,7 @@ export const KonSarView: React.FC = () => {
                         <div className="flex items-center gap-3">
                           <SafeImage
                             src={prod2?.image}
+                            productId={prod2?.id || p2}
                             alt={prod2?.name || p2}
                             className="w-9 h-9 object-cover rounded bg-white border border-stone-200 flex-shrink-0"
                             fallback={

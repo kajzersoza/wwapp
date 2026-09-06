@@ -49,6 +49,7 @@ export const ProductList: React.FC<ProductListProps> = ({
     setViewMode,
     selectProductById,
     categories,
+    categoryCounts,
     manufacturers,
     partTypes,
     insulationTypes,
@@ -64,15 +65,6 @@ export const ProductList: React.FC<ProductListProps> = ({
   const [showFilterDrawer, setShowFilterDrawer] = useState<boolean>(false);
   const [exportedToast, setExportedToast] = useState<boolean>(false);
   const [mobileStyle, setMobileStyle] = useState<'card' | 'compact'>('card');
-
-  // Compute option counts
-  const categoryCounts = useMemo(() => {
-    const map: Record<string, number> = {};
-    products.forEach((p) => {
-      if (p.category?.trim()) map[p.category.trim()] = (map[p.category.trim()] || 0) + 1;
-    });
-    return map;
-  }, [products]);
 
   const manufacturerCounts = useMemo(() => {
     const map: Record<string, number> = {};

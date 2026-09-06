@@ -442,6 +442,7 @@ export const FejSaruView: React.FC = () => {
                           <div className="flex items-start gap-3">
                             <SafeImage
                               src={prod1?.image}
+                              productId={prod1?.id || p1}
                               alt={prod1?.name || p1}
                               className="w-10 h-10 object-cover rounded-lg bg-white border border-stone-200 flex-shrink-0"
                               fallback={
@@ -515,6 +516,7 @@ export const FejSaruView: React.FC = () => {
                           <div className="flex items-start gap-3">
                             <SafeImage
                               src={prod2?.image}
+                              productId={prod2?.id || p2}
                               alt={prod2?.name || p2}
                               className="w-10 h-10 object-cover rounded-lg bg-white border border-stone-200 flex-shrink-0"
                               fallback={
@@ -628,7 +630,7 @@ export const FejSaruView: React.FC = () => {
             return (
               <div
                 key={rel.id}
-                className="bg-white rounded-2xl border border-stone-200 p-4 shadow-2xs hover:shadow-xs transition-shadow space-y-3 flex flex-col justify-between"
+                className="bg-white rounded-2xl border-2 border-amber-300 hover:border-amber-400 p-4 shadow-2xs hover:shadow-xs transition-all space-y-3 flex flex-col justify-between"
               >
                 <div className="space-y-3">
                   {/* Top bar with Relation ID and Note */}
@@ -650,6 +652,7 @@ export const FejSaruView: React.FC = () => {
                   >
                     <SafeImage
                       src={prod1?.image}
+                      productId={prod1?.id || p1}
                       alt={prod1?.name || p1}
                       className="w-11 h-11 object-cover rounded-lg bg-white border border-stone-200 shrink-0"
                       fallback={
@@ -704,6 +707,7 @@ export const FejSaruView: React.FC = () => {
                   >
                     <SafeImage
                       src={prod2?.image}
+                      productId={prod2?.id || p2}
                       alt={prod2?.name || p2}
                       className="w-11 h-11 object-cover rounded-lg bg-white border border-stone-200 shrink-0"
                       fallback={

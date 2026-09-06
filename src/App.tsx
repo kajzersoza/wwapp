@@ -13,6 +13,7 @@ import { BeepuloView } from './components/BeepuloView';
 import { FejSaruView } from './components/FejSaruView';
 import { SaruSpecsView } from './components/SaruSpecsView';
 import { KanbanView } from './components/KanbanView';
+import { RendelesView } from './components/RendelesView';
 import { DashboardView } from './components/DashboardView';
 import { BarcodeScannerModal } from './components/BarcodeScannerModal';
 import { ProductEditModal } from './components/ProductEditModal';
@@ -85,6 +86,7 @@ const MainAppContent: React.FC = () => {
           {activeTab === 'fejsaru' && <FejSaruView />}
           {activeTab === 'saruspecs' && <SaruSpecsView />}
           {activeTab === 'kanban' && <KanbanView />}
+          {activeTab === 'rendeles' && <RendelesView onOpenSyncModal={() => setSyncModalOpen(true)} />}
 
           {activeTab === 'detail' && (
             <ProductDetail

@@ -15,6 +15,7 @@ import {
   SaruSpec,
   KanbanItem,
   KanbanStatus,
+  Order,
 } from '../types';
 import { INITIAL_PRODUCTS } from '../data/initialProducts';
 import { INITIAL_POSITIONS } from '../data/initialPositions';
@@ -26,6 +27,7 @@ import { INITIAL_TERMMEROD } from '../data/initialTermMerod';
 import { INITIAL_BEEPULO } from '../data/initialBeepulo';
 import { INITIAL_FEJSARU } from '../data/initialFejSaru';
 import { INITIAL_SARU_SPECS } from '../data/initialSaruSpecs';
+import { INITIAL_ORDERS } from '../data/initialOrders';
 import {
   getBaseProductId,
   getNewProductId,
@@ -50,6 +52,7 @@ import {
   fetchBeepuloFromGoogleSheet,
   fetchFejSaruFromGoogleSheet,
   fetchSaruSpecsFromGoogleSheet,
+  fetchOrdersFromGoogleSheet,
   parseProductsCsv,
   parsePositionsCsv,
   parseInventoryCsv,
@@ -60,6 +63,7 @@ import {
   parseBeepuloCsv,
   parseFejSaruCsv,
   parseSaruSpecsCsv,
+  parseOrdersCsv,
   exportProductsToCsv,
   exportPositionsToCsv,
   exportInventoryToCsv,
@@ -70,6 +74,7 @@ import {
   exportBeepuloToCsv,
   exportFejSaruToCsv,
   exportSaruSpecsToCsv,
+  exportOrdersToCsv,
 } from '../services/sheetsService';
 import {
   FIRESTORE_COLLECTIONS,
@@ -150,6 +155,11 @@ interface ProductContextType {
   selectedFejSaruId: string | null;
   setSelectedFejSaruId: (id: string | null) => void;
 
+  // Rendelés (Megrendelések) state
+  orders: Order[];
+  selectedOrderId: string | null;
+  setSelectedOrderId: (id: string | null) => void;
+
   // Saru Segédtáblázat (Saru Keresztmetszet Mátrix 0.25..6.00 mm²) state
   saruSpecs: SaruSpec[];
   selectedSaruSpecId: string | null;
@@ -216,6 +226,33 @@ interface ProductContextType {
   }[];
   getNextFejSaruId: () => string;
 
+  // Rendelés calculation & relation helpers
+  getNextOrderId: () => string;
+  getProductOrders: (productId: string) => Order[];
+  getRelatedProductOrders: (productId: string) => {
+    order: Order;
+    relatedProductId: string;
+    relationType: string;
+    relatedProduct?: Product;
+  }[];
+  getProductOrderSummary: (productId: string) => {
+    isDirectlyOrdered: boolean;
+    hasRelatedOrder: boolean;
+    directOrders: Order[];
+    relatedOrders: {
+      order: Order;
+      relatedProductId: string;
+      relationType: string;
+      relatedProduct?: Product;
+    }[];
+    totalActiveOrdersCount: number;
+  };
+  getAllRelatedProductIds: (productId: string) => {
+    id: string;
+    relationType: string;
+    product?: Product;
+  }[];
+
   // Actions
   setActiveTab: (tab: ActiveTab) => void;
   setViewMode: (mode: ViewMode) => void;
@@ -264,6 +301,8 @@ interface ProductContextType {
   exportBeepuloCsv: () => string;
   exportFejSaruCsv: () => string;
   exportSaruSpecsCsv: () => string;
+  importOrdersCsvText: (csvText: string) => number;
+  exportOrdersCsv: () => string;
 
   // Firebase Firestore State & Actions
   isFirebaseConnected: boolean;
@@ -338,6 +377,11 @@ interface ProductContextType {
   // FejSaru CRUD
   addFejSaruRelation: (relation: FejSaruRelation) => void;
   deleteFejSaruRelation: (id: string) => void;
+
+  // Rendelés CRUD
+  addOrder: (order: Order) => Promise<void>;
+  updateOrder: (id: string, updatedFields: Partial<Order>) => Promise<void>;
+  deleteOrder: (id: string) => Promise<void>;
 }
 
 const STORAGE_KEY = 'kinetic_products_cache';
@@ -350,6 +394,7 @@ const TERMMEROD_STORAGE_KEY = 'kinetic_termmerod_cache';
 const BEEPULO_STORAGE_KEY = 'kinetic_beepulo_cache';
 const FEJSARU_STORAGE_KEY = 'kinetic_fejsaru_cache';
 const SARU_SPECS_STORAGE_KEY = 'kinetic_saruspecs_cache_v8';
+const ORDERS_STORAGE_KEY = 'kinetic_orders_cache_v1';
 const SYNC_TIME_KEY = 'kinetic_last_sync_time';
 const SHEET_URL_KEY = 'kinetic_sheet_url';
 
@@ -540,6 +585,27 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     return INITIAL_SARU_SPECS;
   });
 
+  // Rendelés (Orders) state
+  const [orders, setOrders] = useState<Order[]>(() => {
+    try {
+      const saved = localStorage.getItem(ORDERS_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // If cached orders only have the previous 6 dummy items, upgrade to the real 28 orders
+          const isOldMock = parsed.some((o: Order) => o.id?.startsWith('REND-2024-00')) || parsed.length <= 6;
+          if (isOldMock && INITIAL_ORDERS.length >= 20) {
+            return INITIAL_ORDERS;
+          }
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return INITIAL_ORDERS;
+  });
+
   // Unified canonical products list with Saru auto-inclusion
   const products = useMemo(() => {
     const unified = unifyProductList(rawProducts);
@@ -579,6 +645,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [selectedBeepuloId, setSelectedBeepuloId] = useState<string | null>(null);
   const [selectedFejSaruId, setSelectedFejSaruId] = useState<string | null>(null);
   const [selectedSaruSpecId, setSelectedSaruSpecId] = useState<string | null>(null);
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>('inventory');
   const [viewMode, setViewMode] = useState<ViewMode>('table');
   const [filters, setFilters] = useState<FilterState>(initialFilters);
@@ -684,6 +751,14 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     }
   }, [saruSpecs]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(orders));
+    } catch (e) {
+      console.warn('LocalStorage save error (orders):', e);
+    }
+  }, [orders]);
+
   // Initial Firebase real-time listeners & database bootstrapping
   useEffect(() => {
     let unsubs: (() => void)[] = [];
@@ -707,6 +782,18 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
           if (cloudData.beepulo.length > 0) setBeepulo(cloudData.beepulo);
           if (cloudData.fejSaru.length > 0) setFejSaru(cloudData.fejSaru);
           if (cloudData.saruSpecs.length > 0) setSaruSpecs(cloudData.saruSpecs);
+          if (cloudData.orders && cloudData.orders.length > 0) {
+            const isOldMock = cloudData.orders.some((o) => o.id?.startsWith('REND-2024-00')) || cloudData.orders.length <= 6;
+            if (isOldMock && INITIAL_ORDERS.length >= 20) {
+              setOrders(INITIAL_ORDERS);
+              bulkSaveToFirestore(FIRESTORE_COLLECTIONS.ORDERS, INITIAL_ORDERS).catch(console.error);
+            } else {
+              setOrders(cloudData.orders);
+            }
+          } else {
+            setOrders(INITIAL_ORDERS);
+            bulkSaveToFirestore(FIRESTORE_COLLECTIONS.ORDERS, INITIAL_ORDERS).catch(console.error);
+          }
 
           setIsFirebaseConnected(true);
           setFirebaseSyncTime(new Date().toLocaleTimeString('hu-HU'));
@@ -723,6 +810,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
             beepulo,
             fejSaru,
             saruSpecs,
+            orders: orders.length >= 20 ? orders : INITIAL_ORDERS,
           };
           const res = await uploadAllToFirestore(initialDataset);
           setFirebaseStats(res.stats);
@@ -782,6 +870,31 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
             if (items.length > 0) setSaruSpecs(items);
           })
         );
+        unsubs.push(
+          subscribeToCollection<Order>(FIRESTORE_COLLECTIONS.ORDERS, (items) => {
+            if (items.length > 0) {
+              const isOldMock = items.some((o) => o.id?.startsWith('REND-2024-00')) || items.length <= 6;
+              if (!isOldMock) {
+                setOrders(items);
+              }
+            }
+          })
+        );
+
+        // Background check: attempt fetching the latest 28 items directly from Google Sheet if needed
+        fetchOrdersFromGoogleSheet(sheetUrl)
+          .then((liveOrders) => {
+            if (liveOrders.length >= 20) {
+              setOrders(liveOrders);
+              bulkSaveToFirestore(FIRESTORE_COLLECTIONS.ORDERS, liveOrders).catch(console.error);
+              try {
+                localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(liveOrders));
+              } catch {
+                // ignore
+              }
+            }
+          })
+          .catch(console.error);
       } catch (err: unknown) {
         console.error('Firebase initialization error:', err);
         setFirebaseError(err instanceof Error ? err.message : 'Firebase hiba');
@@ -863,6 +976,12 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         setSaruSpecs(fetchedSaruSpecs);
       }
 
+      // 10. Fetch Rendelés munkalap
+      const fetchedOrders = await fetchOrdersFromGoogleSheet(targetUrl);
+      if (fetchedOrders.length > 0) {
+        setOrders(fetchedOrders);
+      }
+
       // Also persist fetched data into Firebase Firestore
       const dataset: FullDataset = {
         products: fetchedProducts.length > 0 ? fetchedProducts : rawProducts,
@@ -875,6 +994,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         beepulo: fetchedBeepulo.length > 0 ? fetchedBeepulo : beepulo,
         fejSaru: fetchedFejSaru.length > 0 ? fetchedFejSaru : fejSaru,
         saruSpecs: fetchedSaruSpecs.length > 0 ? fetchedSaruSpecs : saruSpecs,
+        orders: fetchedOrders.length > 0 ? fetchedOrders : orders,
       };
       uploadAllToFirestore(dataset)
         .then((res) => {
@@ -915,6 +1035,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         beepulo,
         fejSaru,
         saruSpecs,
+        orders,
       };
       const res = await uploadAllToFirestore(dataset);
       setFirebaseStats(res.stats);
@@ -947,6 +1068,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
       if (data.beepulo.length > 0) setBeepulo(data.beepulo);
       if (data.fejSaru.length > 0) setFejSaru(data.fejSaru);
       if (data.saruSpecs.length > 0) setSaruSpecs(data.saruSpecs);
+      if (data.orders && data.orders.length > 0) setOrders(data.orders);
 
       setIsFirebaseConnected(true);
       setFirebaseSyncTime(new Date().toLocaleTimeString('hu-HU'));
@@ -975,6 +1097,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         beepulo,
         fejSaru,
         saruSpecs,
+        orders,
       },
     };
     return JSON.stringify(backup, null, 2);
@@ -998,6 +1121,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         beepulo: data.beepulo || [],
         fejSaru: data.fejSaru || [],
         saruSpecs: data.saruSpecs || [],
+        orders: data.orders || [],
       };
       const res = await uploadAllToFirestore(dataset);
       await refreshFromFirebase();
@@ -1190,6 +1314,24 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const exportSaruSpecsCsv = (): string => {
     return exportSaruSpecsToCsv(saruSpecs);
+  };
+
+  const importOrdersCsvText = (csvText: string): number => {
+    const imported = parseOrdersCsv(csvText);
+    if (imported.length > 0) {
+      const map = new Map<string, Order>();
+      orders.forEach((o) => map.set(o.id, o));
+      imported.forEach((o) => map.set(o.id, o));
+      const updated = Array.from(map.values());
+      setOrders(updated);
+      bulkSaveToFirestore(FIRESTORE_COLLECTIONS.ORDERS, updated).catch(console.error);
+      return imported.length;
+    }
+    return 0;
+  };
+
+  const exportOrdersCsv = (): string => {
+    return exportOrdersToCsv(orders);
   };
 
   const getAllSaruSpecsForProduct = (productOrId: Product | string): SaruSpec[] => {
@@ -2050,6 +2192,229 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     return results;
   };
 
+  // Rendelés (Orders) CRUD & Helpers
+  const getNextOrderId = (): string => {
+    const nextNum = orders.length + 1;
+    const year = new Date().getFullYear();
+    return `REND-${year}-${String(nextNum).padStart(3, '0')}`;
+  };
+
+  const addOrder = async (order: Order): Promise<void> => {
+    const finalId = order.id || order.rendelesId || getNextOrderId();
+    const finalOrder: Order = {
+      ...order,
+      id: finalId,
+      rendelesId: order.rendelesId || finalId,
+    };
+    setOrders((prev) => [finalOrder, ...prev.filter((o) => o.id !== finalOrder.id && o.rendelesId !== finalOrder.rendelesId)]);
+    await saveItemToFirestore(FIRESTORE_COLLECTIONS.ORDERS, finalOrder).catch(console.error);
+  };
+
+  const updateOrder = async (id: string, updatedFields: Partial<Order>): Promise<void> => {
+    let updatedOrder: Order | null = null;
+    setOrders((prev) =>
+      prev.map((o) => {
+        if (o.id === id || o.rendelesId === id) {
+          updatedOrder = { ...o, ...updatedFields };
+          return updatedOrder;
+        }
+        return o;
+      })
+    );
+    if (updatedOrder) {
+      await saveItemToFirestore(FIRESTORE_COLLECTIONS.ORDERS, updatedOrder).catch(console.error);
+    }
+  };
+
+  const deleteOrder = async (id: string): Promise<void> => {
+    setOrders((prev) => prev.filter((o) => o.id !== id && o.rendelesId !== id));
+    if (selectedOrderId === id) {
+      setSelectedOrderId(null);
+    }
+    await deleteItemFromFirestore(FIRESTORE_COLLECTIONS.ORDERS, id).catch(console.error);
+  };
+
+  const getAllRelatedProductIds = (productId: string): { id: string; relationType: string; product?: Product }[] => {
+    const cleanId = (productId || '').trim();
+    if (!cleanId) return [];
+    const baseId = getBaseProductId(cleanId);
+    const cLower = cleanId.toLowerCase();
+    const bLower = baseId.toLowerCase();
+
+    const map = new Map<string, { id: string; relationType: string; product?: Product }>();
+
+    // 1. KonSar
+    const connectedKonSar = getConnectedKonSar(cleanId);
+    for (const rel of connectedKonSar) {
+      const pid = (rel.partnerId || '').trim();
+      if (pid && !map.has(pid.toLowerCase())) {
+        map.set(pid.toLowerCase(), {
+          id: pid,
+          relationType: `KonSar (${rel.partnerType})`,
+          product: rel.partnerProduct,
+        });
+      }
+    }
+
+    // 2. TermMerod
+    const connectedTermMerod = getConnectedTermMerod(cleanId);
+    for (const rel of connectedTermMerod) {
+      const pid = (rel.partnerId || '').trim();
+      if (pid && !map.has(pid.toLowerCase())) {
+        map.set(pid.toLowerCase(), {
+          id: pid,
+          relationType: `Mérődoboz (${rel.role})`,
+          product: rel.partnerProduct,
+        });
+      }
+    }
+
+    // 3. Beépülő
+    const connectedBeepulo = getConnectedBeepulo(cleanId);
+    for (const rel of connectedBeepulo) {
+      const pid = (rel.partnerId || '').trim();
+      if (pid && !map.has(pid.toLowerCase())) {
+        map.set(pid.toLowerCase(), {
+          id: pid,
+          relationType: `Beépülő (${rel.role})`,
+          product: rel.partnerProduct,
+        });
+      }
+    }
+
+    // 4. FejSaru
+    const connectedFejSaru = getConnectedFejSaru(cleanId);
+    for (const rel of connectedFejSaru) {
+      const pid = (rel.partnerId || '').trim();
+      if (pid && !map.has(pid.toLowerCase())) {
+        map.set(pid.toLowerCase(), {
+          id: pid,
+          relationType: `FejSaru (${rel.role})`,
+          product: rel.partnerProduct,
+        });
+      }
+    }
+
+    // 5. Saru Specs: Saruzófej <-> Saru
+    for (const spec of saruSpecs) {
+      const specPid = (spec.productId || '').trim();
+      const specFc = (spec.factoryCode || '').trim();
+      const specFeeder = (spec.feederTool || '').trim();
+
+      const matchesTerminal =
+        (specPid && (specPid.toLowerCase() === cLower || specPid.toLowerCase() === bLower)) ||
+        (specFc && (specFc.toLowerCase() === cLower || specFc.toLowerCase() === bLower));
+
+      if (matchesTerminal && specFeeder && !map.has(specFeeder.toLowerCase())) {
+        map.set(specFeeder.toLowerCase(), {
+          id: specFeeder,
+          relationType: 'Saru specifikáció (Saruzó fej)',
+        });
+      }
+
+      const matchesFeeder =
+        specFeeder && (specFeeder.toLowerCase() === cLower || specFeeder.toLowerCase() === bLower);
+
+      if (matchesFeeder) {
+        const partnerTermId = specPid || specFc;
+        if (partnerTermId && !map.has(partnerTermId.toLowerCase())) {
+          map.set(partnerTermId.toLowerCase(), {
+            id: partnerTermId,
+            relationType: 'Saru specifikáció (Saru alkatrész)',
+          });
+        }
+      }
+    }
+
+    return Array.from(map.values());
+  };
+
+  const getProductOrders = (productId: string): Order[] => {
+    const cleanId = (productId || '').trim();
+    if (!cleanId) return [];
+    const baseId = getBaseProductId(cleanId);
+    const cLower = cleanId.toLowerCase();
+    const bLower = baseId.toLowerCase();
+
+    return orders.filter((o) => {
+      const orderPid = (o.termekId || '').trim();
+      if (!orderPid) return false;
+      const oBase = getBaseProductId(orderPid);
+      const oLower = orderPid.toLowerCase();
+      const oBaseLower = oBase.toLowerCase();
+
+      return oLower === cLower || oBaseLower === bLower || oLower === bLower || oBaseLower === cLower;
+    });
+  };
+
+  const getRelatedProductOrders = (productId: string): {
+    order: Order;
+    relatedProductId: string;
+    relationType: string;
+    relatedProduct?: Product;
+  }[] => {
+    const relatedList = getAllRelatedProductIds(productId);
+    if (relatedList.length === 0) return [];
+
+    const results: {
+      order: Order;
+      relatedProductId: string;
+      relationType: string;
+      relatedProduct?: Product;
+    }[] = [];
+
+    const seenOrderIds = new Set<string>();
+
+    for (const rel of relatedList) {
+      const relOrders = getProductOrders(rel.id);
+      for (const ord of relOrders) {
+        if (!seenOrderIds.has(ord.id)) {
+          seenOrderIds.add(ord.id);
+          results.push({
+            order: ord,
+            relatedProductId: rel.id,
+            relationType: rel.relationType,
+            relatedProduct: rel.product,
+          });
+        }
+      }
+    }
+
+    return results;
+  };
+
+  const getProductOrderSummary = (productId: string) => {
+    const directOrders = getProductOrders(productId);
+    const relatedOrders = getRelatedProductOrders(productId);
+
+    const isDirectlyOrdered = directOrders.some(
+      (o) =>
+        (o.statusz && !o.statusz.toLowerCase().includes('töröl') && !o.statusz.toLowerCase().includes('visszavon')) ||
+        Boolean(o.datumMegrendelve)
+    );
+    const hasRelatedOrder = relatedOrders.some(
+      (r) =>
+        (r.order.statusz && !r.order.statusz.toLowerCase().includes('töröl') && !r.order.statusz.toLowerCase().includes('visszavon')) ||
+        Boolean(r.order.datumMegrendelve)
+    );
+
+    const totalActiveOrdersCount =
+      directOrders.filter(
+        (o) => !o.statusz?.toLowerCase().includes('töröl') && !o.statusz?.toLowerCase().includes('visszavon')
+      ).length +
+      relatedOrders.filter(
+        (r) => !r.order.statusz?.toLowerCase().includes('töröl') && !r.order.statusz?.toLowerCase().includes('visszavon')
+      ).length;
+
+    return {
+      isDirectlyOrdered,
+      hasRelatedOrder,
+      directOrders,
+      relatedOrders,
+      totalActiveOrdersCount,
+    };
+  };
+
   const getNextTransactionId = (): string => {
     const nextNum = inventory.length + 1;
     return `TRX-${String(nextNum).padStart(3, '0')}`;
@@ -2493,8 +2858,21 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         saruSpecs,
         selectedSaruSpecId,
         setSelectedSaruSpecId,
+        orders,
+        selectedOrderId,
+        setSelectedOrderId,
         getSaruSpecForProduct,
         getAllSaruSpecsForProduct,
+        addOrder,
+        updateOrder,
+        deleteOrder,
+        getNextOrderId,
+        getAllRelatedProductIds,
+        getProductOrders,
+        getRelatedProductOrders,
+        getProductOrderSummary,
+        exportOrdersCsv,
+        importOrdersCsvText,
         getProductTotalStock,
         getProductNewStock,
         getProductUsedStock,

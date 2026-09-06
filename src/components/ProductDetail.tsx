@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useProducts } from '../context/ProductContext';
-import { Product, KanbanStatus } from '../types';
+import { Product, KanbanStatus, Order } from '../types';
 import { TermekIdLink } from './TermekIdLink';
 import { PositionLink } from './PositionLink';
 import { FilterTag } from './FilterTag';
@@ -48,6 +48,8 @@ import {
   FlaskConical,
   CheckCircle2,
   AlertCircle,
+  ShoppingCart,
+  PackageCheck,
 } from 'lucide-react';
 
 interface ProductDetailProps {
@@ -149,6 +151,10 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
     getNextKanbanId,
     kanban,
     setSelectedKanbanId,
+    getProductOrders,
+    getRelatedProductOrders,
+    addOrder,
+    getNextOrderId,
   } = useProducts();
 
   const [copied, setCopied] = useState(false);
@@ -223,6 +229,165 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
       (k) => k.productId && k.productId.trim().toLowerCase() === pIdLower
     );
   }, [kanban, p?.id]);
+
+  // Find direct and related orders for this product
+  const productDirectOrders = useMemo(() => {
+    if (!p?.id) return [];
+    return getProductOrders(p.id);
+  }, [p?.id, getProductOrders]);
+
+  const productRelatedOrders = useMemo(() => {
+    if (!p?.id) return [];
+    return getRelatedProductOrders(p.id);
+  }, [p?.id, getRelatedProductOrders]);
+
+  // Helper to parse date string into timestamp for accurate chronological ordering
+  const parseOrderDateToTime = (dateStr?: string): number => {
+    if (!dateStr || typeof dateStr !== 'string') return 0;
+    const s = dateStr.trim();
+    if (!s) return 0;
+    const match = s.match(/(\d{4})[.\-\/]\s*(\d{1,2})[.\-\/]\s*(\d{1,2})/);
+    if (match) {
+      const year = parseInt(match[1], 10);
+      const month = parseInt(match[2], 10) - 1;
+      const day = parseInt(match[3], 10);
+      const d = new Date(year, month, day);
+      if (!isNaN(d.getTime())) return d.getTime();
+    }
+    const parsed = Date.parse(s);
+    return isNaN(parsed) ? 0 : parsed;
+  };
+
+  const getOrderEffectiveTimestamp = (ord: Order): number => {
+    return Math.max(
+      parseOrderDateToTime(ord.datumRaktarban),
+      parseOrderDateToTime(ord.datumMegrendelve),
+      parseOrderDateToTime(ord.datum)
+    );
+  };
+
+  // Helper to classify order status into clean categories
+  const getOrderStatusCategory = (status?: string): 'megrendelni' | 'megrendelve' | 'megerkezett' | 'egyeb' => {
+    const s = (status || '').toLowerCase().trim();
+    if (
+      s.includes('érkezett') ||
+      s.includes('erkezett') ||
+      s.includes('raktár') ||
+      s.includes('raktar') ||
+      s.includes('átvéve') ||
+      s.includes('atveve') ||
+      s.includes('befejez')
+    ) {
+      return 'megerkezett';
+    }
+    if (
+      s.includes('megrendelve') ||
+      s.includes('rendelve') ||
+      s.includes('leadva') ||
+      s.includes('szállítás') ||
+      s.includes('folyamatban')
+    ) {
+      return 'megrendelve';
+    }
+    if (
+      s.includes('megrendelni') ||
+      s.includes('tervezett') ||
+      s.includes('ajánlat') ||
+      s.includes('szükséges') ||
+      s.includes('igeny')
+    ) {
+      return 'megrendelni';
+    }
+    return 'egyeb';
+  };
+
+  // Sorted list of direct orders chronologically by date (most recent first)
+  const sortedDirectOrders = useMemo(() => {
+    if (!productDirectOrders || productDirectOrders.length === 0) return [];
+    return [...productDirectOrders].sort((a, b) => {
+      const timeA = getOrderEffectiveTimestamp(a);
+      const timeB = getOrderEffectiveTimestamp(b);
+      return timeB - timeA;
+    });
+  }, [productDirectOrders]);
+
+  // Analyzes the current order status for the header (címsor):
+  // - If the series completed and arrived ("megerkezett"), DO NOT show in címsor.
+  // - In the címsor, only show ONE current active status: "Megrendelni" (red) or "Megrendelve" (blue).
+  const activeHeaderOrder = useMemo(() => {
+    if (sortedDirectOrders.length === 0) return null;
+
+    const latestOrder = sortedDirectOrders[0];
+    const latestCat = getOrderStatusCategory(latestOrder.statusz);
+
+    // If the latest order is already arrived/completed, the cycle has concluded -> DO NOT show in címsor!
+    if (latestCat === 'megerkezett') {
+      return null;
+    }
+
+    if (latestCat === 'megrendelve') {
+      return {
+        order: latestOrder,
+        type: 'megrendelve' as const,
+        label: 'Megrendelve',
+      };
+    }
+
+    if (latestCat === 'megrendelni') {
+      return {
+        order: latestOrder,
+        type: 'megrendelni' as const,
+        label: 'Megrendelni',
+      };
+    }
+
+    // Check if any active order exists (uncompleted)
+    const active = sortedDirectOrders.find((o) => {
+      const cat = getOrderStatusCategory(o.statusz);
+      return cat === 'megrendelve' || cat === 'megrendelni';
+    });
+
+    if (active) {
+      const cat = getOrderStatusCategory(active.statusz);
+      return {
+        order: active,
+        type: cat === 'megrendelve' ? ('megrendelve' as const) : ('megrendelni' as const),
+        label: cat === 'megrendelve' ? 'Megrendelve' : 'Megrendelni',
+      };
+    }
+
+    return null;
+  }, [sortedDirectOrders]);
+
+  // Order status badge styling helper for the list
+  const getOrderStatusBadge = (status?: string) => {
+    const cat = getOrderStatusCategory(status);
+    if (cat === 'megerkezett') {
+      return {
+        bg: 'bg-emerald-50 text-emerald-800 border-emerald-300',
+        dot: 'bg-emerald-500',
+        label: status || 'Megérkezett / Raktárban',
+        icon: CheckCircle2,
+      };
+    }
+    if (cat === 'megrendelve') {
+      return {
+        bg: 'bg-sky-50 text-sky-800 border-sky-300',
+        dot: 'bg-sky-500',
+        label: status || 'Megrendelve',
+        icon: Clock,
+      };
+    }
+    // megrendelni -> piros
+    return {
+      bg: 'bg-rose-50 text-rose-800 border-rose-300',
+      dot: 'bg-rose-500',
+      label: status || 'Megrendelni',
+      icon: ShoppingCart,
+    };
+  };
+
+  const hasAnyOrder = sortedDirectOrders.length > 0 || productRelatedOrders.length > 0;
 
   // Helper to format kanban status styles and icons
   const getKanbanStatusBadgeStyle = (status: string) => {
@@ -485,32 +650,6 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                 </span>
               )}
 
-              {/* Raktári Pozíciók kijelzése */}
-              {stockPositions.length > 0 ? (
-                <div className="flex items-center gap-1 flex-wrap">
-                  {stockPositions.map((pos) => (
-                    <button
-                      key={pos.positionId}
-                      type="button"
-                      onClick={() => selectPositionById(pos.positionId)}
-                      className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#E0E9E8] text-[#006067] border border-[#006067]/20 hover:bg-[#006067] hover:text-white cursor-pointer transition-colors"
-                      title={`Raktári pozíció: ${pos.positionName} (${pos.quantity} db). Kattintson a pozíció megtekintéséhez!`}
-                    >
-                      <MapPin className="w-3 h-3" />
-                      <span>{pos.positionName} ({pos.quantity} db)</span>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <span
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-stone-100 text-stone-500 border border-stone-200"
-                  title="A termékhez jelenleg nincs megadva raktári pozíció"
-                >
-                  <MapPin className="w-3 h-3 text-stone-400" />
-                  <span>Raktári pozíció: nincs megadva</span>
-                </span>
-              )}
-
               {/* Kanban státusz kijelzés a fejlécben */}
               {productKanbanItems.length > 0 ? (
                 <div className="flex items-center gap-1.5 flex-wrap">
@@ -548,6 +687,43 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                 >
                   <KanbanIcon className="w-3 h-3 text-stone-400" />
                   <span>Kanban: nincs hozzáadva</span>
+                </button>
+              )}
+
+              {/* Aktuális Rendelés státusz a címsorban: csak 'Megrendelni' (piros) vagy 'Megrendelve' (kék). Ha megérkezett, nem jelenik meg! */}
+              {activeHeaderOrder && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('rendeles')}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border transition-colors shadow-2xs cursor-pointer ${
+                    activeHeaderOrder.type === 'megrendelni'
+                      ? 'bg-rose-100 text-rose-800 border-rose-300 hover:bg-rose-200'
+                      : 'bg-sky-100 text-sky-800 border-sky-300 hover:bg-sky-200'
+                  }`}
+                  title={`Aktuális megrendelés státusza: ${activeHeaderOrder.label}. ${
+                    activeHeaderOrder.order.datumMegrendelve
+                      ? `Megrendelve: ${activeHeaderOrder.order.datumMegrendelve}`
+                      : activeHeaderOrder.order.datum
+                      ? `Dátum: ${activeHeaderOrder.order.datum}`
+                      : ''
+                  }. Kattintson a Rendelés munkalap megnyitásához!`}
+                >
+                  <ShoppingCart
+                    className={`w-3.5 h-3.5 flex-shrink-0 ${
+                      activeHeaderOrder.type === 'megrendelni' ? 'text-rose-700' : 'text-sky-700'
+                    }`}
+                  />
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      activeHeaderOrder.type === 'megrendelni' ? 'bg-rose-600 animate-pulse' : 'bg-sky-600'
+                    }`}
+                  ></span>
+                  <span>{activeHeaderOrder.label}</span>
+                  {(activeHeaderOrder.order.datumMegrendelve || activeHeaderOrder.order.datum) && (
+                    <span className="text-[10px] font-normal opacity-80 font-mono">
+                      ({activeHeaderOrder.order.datumMegrendelve || activeHeaderOrder.order.datum})
+                    </span>
+                  )}
                 </button>
               )}
             </div>
@@ -725,6 +901,152 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Active Orders & Connected Orders Banner */}
+      {hasAnyOrder && (
+        <div className="bg-gradient-to-r from-sky-50/90 via-teal-50/80 to-emerald-50/70 border border-sky-200/90 rounded-xl p-4 shadow-2xs space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-[#006067] text-white flex items-center justify-center shadow-xs flex-shrink-0">
+                <ShoppingCart className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xs font-bold text-stone-900">
+                    Rendelési Történet (Dátum szerint rendezve)
+                  </h3>
+                  {sortedDirectOrders.length > 0 && (
+                    <span className="text-[11px] font-extrabold bg-[#E0E9E8] text-[#006067] border border-[#006067]/20 px-2 py-0.5 rounded-full">
+                      {sortedDirectOrders.length} db közvetlen tétel
+                    </span>
+                  )}
+                  {productRelatedOrders.length > 0 && (
+                    <span className="text-[11px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-full">
+                      Kapcsolódó: {productRelatedOrders.length} tétel
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-stone-600 mt-0.5">
+                  A cikkszámhoz tartozó megrendelési tételek és állapotok dátum szerinti időrendben
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              id="detail-open-rendeles-tab-btn"
+              onClick={() => setActiveTab('rendeles')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#006067] hover:bg-[#00474c] text-white text-xs font-bold transition-colors shadow-xs cursor-pointer"
+            >
+              <ShoppingCart className="w-3.5 h-3.5" />
+              <span>Megnyitás a Rendelés Munkalapon</span>
+            </button>
+          </div>
+
+          {/* Direct orders list sorted chronologically by date */}
+          {sortedDirectOrders.length > 0 && (
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] font-bold text-stone-700 uppercase tracking-wider">
+                  Cikkszám rendelési tételei (időrendi lista):
+                </p>
+                <span className="text-[10px] text-stone-500 italic">
+                  Dátum szerinti sorrendben (legújabb elöl)
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                {sortedDirectOrders.map((ord, idx) => {
+                  const badge = getOrderStatusBadge(ord.statusz);
+                  const Icon = badge.icon;
+                  return (
+                    <div
+                      key={ord.id || `ord-${idx}`}
+                      className="p-3 bg-white/95 rounded-lg border border-stone-200 flex flex-col justify-between text-xs space-y-2.5 shadow-3xs hover:border-[#006067]/30 transition-all"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="w-5 h-5 rounded-full bg-stone-100 text-stone-700 font-mono text-[10px] font-bold flex items-center justify-center border border-stone-200">
+                            #{idx + 1}
+                          </span>
+                          <span className="text-[11px] text-stone-700 font-mono">
+                            Cikkszám: <strong className="font-bold text-[#006067] text-xs">{ord.termekId}</strong>
+                          </span>
+                        </div>
+                        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-bold text-[11px] border ${badge.bg}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${badge.dot}`}></span>
+                          <Icon className="w-3 h-3" />
+                          <span>{badge.label}</span>
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2 text-[11px] text-stone-600 bg-stone-50 p-2 rounded border border-stone-100">
+                        <div>
+                          <span className="text-stone-400 block text-[10px] font-medium">1. Létrehozva:</span>
+                          <span className="font-mono font-semibold text-stone-800">{ord.datum || '—'}</span>
+                        </div>
+                        <div>
+                          <span className="text-stone-400 block text-[10px] font-medium">2. Megrendelve:</span>
+                          <span className="font-mono font-semibold text-stone-800">{ord.datumMegrendelve || '—'}</span>
+                        </div>
+                        <div>
+                          <span className="text-stone-400 block text-[10px] font-medium">3. Raktárban:</span>
+                          <span className="font-mono font-semibold text-stone-800">{ord.datumRaktarban || '—'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Related orders list */}
+          {productRelatedOrders.length > 0 && (
+            <div className="space-y-1.5 pt-2 border-t border-stone-200/60">
+              <p className="text-[11px] font-bold text-amber-900 uppercase tracking-wider">
+                Ehhez a cikkhez kapcsolódó termékek megrendelései ({productRelatedOrders.length} db):
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {productRelatedOrders.map((ro, idx) => (
+                  <div
+                    key={`rel-ord-${ro.order.id}-${idx}`}
+                    className="p-3 bg-white/90 rounded-lg border border-amber-200/80 flex flex-col justify-between text-xs space-y-2 shadow-3xs"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-200">
+                          {ro.relationType}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => selectProductById(ro.relatedProductId)}
+                          className="font-mono font-bold text-[#006067] hover:underline"
+                        >
+                          {ro.relatedProductId}
+                        </button>
+                        {ro.relatedProduct?.name && (
+                          <span className="text-stone-600 text-[11px] truncate max-w-[140px]">
+                            ({ro.relatedProduct.name})
+                          </span>
+                        )}
+                      </div>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold text-[11px] bg-amber-50 text-amber-900 border border-amber-300">
+                        <span>{ro.order.statusz || 'Megrendelve'}</span>
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px] text-stone-600 bg-stone-50/80 p-2 rounded">
+                      <span>Termék: <strong className="font-mono text-[#006067]">{ro.relatedProductId}</strong></span>
+                      <span>Megrendelve: <strong className="font-mono">{ro.order.datumMegrendelve || ro.order.datum || '—'}</strong></span>
+                      <span>Raktárban: <strong className="font-mono text-emerald-800">{ro.order.datumRaktarban || 'Függőben'}</strong></span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

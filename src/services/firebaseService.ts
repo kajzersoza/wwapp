@@ -23,6 +23,7 @@ import {
   BeepuloRelation,
   FejSaruRelation,
   SaruSpec,
+  Order,
 } from '../types';
 
 // Initialize Firebase App
@@ -67,6 +68,7 @@ export const FIRESTORE_COLLECTIONS = {
   BEEPULO: 'beepulo',
   FEJSARU: 'fejsaru',
   SARUSPECS: 'saruspecs',
+  ORDERS: 'rendelesek',
   METADATA: 'metadata',
 } as const;
 
@@ -195,6 +197,7 @@ export interface FullDataset {
   beepulo: BeepuloRelation[];
   fejSaru: FejSaruRelation[];
   saruSpecs: SaruSpec[];
+  orders?: Order[];
 }
 
 /**
@@ -216,26 +219,31 @@ export async function uploadAllToFirestore(
     if (onProgress) onProgress('Készlet tranzakciók mentése Firestore-ba...', 30);
     stats.inventory = await bulkSaveToFirestore(FIRESTORE_COLLECTIONS.INVENTORY, data.inventory);
 
-    if (onProgress) onProgress('Karbantartások mentése Firestore-ba...', 45);
+    if (onProgress) onProgress('Karbantartások mentése Firestore-ba...', 40);
     stats.inspections = await bulkSaveToFirestore(FIRESTORE_COLLECTIONS.INSPECTIONS, data.inspections);
 
-    if (onProgress) onProgress('Kanban kártyák mentése Firestore-ba...', 60);
+    if (onProgress) onProgress('Kanban kártyák mentése Firestore-ba...', 50);
     stats.kanban = await bulkSaveToFirestore(FIRESTORE_COLLECTIONS.KANBAN, data.kanban);
 
-    if (onProgress) onProgress('KonSar kapcsolatok mentése Firestore-ba...', 70);
+    if (onProgress) onProgress('KonSar kapcsolatok mentése Firestore-ba...', 60);
     stats.konSar = await bulkSaveToFirestore(FIRESTORE_COLLECTIONS.KONSAR, data.konSar);
 
-    if (onProgress) onProgress('TermMerod kapcsolatok mentése Firestore-ba...', 80);
+    if (onProgress) onProgress('TermMerod kapcsolatok mentése Firestore-ba...', 70);
     stats.termMerod = await bulkSaveToFirestore(FIRESTORE_COLLECTIONS.TERMMEROD, data.termMerod);
 
-    if (onProgress) onProgress('Beépülő alkatrészek mentése Firestore-ba...', 85);
+    if (onProgress) onProgress('Beépülő alkatrészek mentése Firestore-ba...', 80);
     stats.beepulo = await bulkSaveToFirestore(FIRESTORE_COLLECTIONS.BEEPULO, data.beepulo);
 
-    if (onProgress) onProgress('FejSaru kapcsolatok mentése Firestore-ba...', 90);
+    if (onProgress) onProgress('FejSaru kapcsolatok mentése Firestore-ba...', 85);
     stats.fejSaru = await bulkSaveToFirestore(FIRESTORE_COLLECTIONS.FEJSARU, data.fejSaru);
 
-    if (onProgress) onProgress('Saru specifikációs mátrix mentése Firestore-ba...', 95);
+    if (onProgress) onProgress('Saru specifikációs mátrix mentése Firestore-ba...', 90);
     stats.saruSpecs = await bulkSaveToFirestore(FIRESTORE_COLLECTIONS.SARUSPECS, data.saruSpecs);
+
+    if (data.orders && data.orders.length > 0) {
+      if (onProgress) onProgress('Rendelések mentése Firestore-ba...', 95);
+      stats.orders = await bulkSaveToFirestore(FIRESTORE_COLLECTIONS.ORDERS, data.orders);
+    }
 
     // Save sync metadata
     const metaRef = doc(firestoreDb, FIRESTORE_COLLECTIONS.METADATA, 'sync_info');
@@ -268,6 +276,7 @@ export async function downloadAllFromFirestore(): Promise<FullDataset> {
     beepulo,
     fejSaru,
     saruSpecs,
+    orders,
   ] = await Promise.all([
     getAllFromFirestore<Product>(FIRESTORE_COLLECTIONS.PRODUCTS),
     getAllFromFirestore<WarehousePosition>(FIRESTORE_COLLECTIONS.POSITIONS),
@@ -279,6 +288,7 @@ export async function downloadAllFromFirestore(): Promise<FullDataset> {
     getAllFromFirestore<BeepuloRelation>(FIRESTORE_COLLECTIONS.BEEPULO),
     getAllFromFirestore<FejSaruRelation>(FIRESTORE_COLLECTIONS.FEJSARU),
     getAllFromFirestore<SaruSpec>(FIRESTORE_COLLECTIONS.SARUSPECS),
+    getAllFromFirestore<Order>(FIRESTORE_COLLECTIONS.ORDERS).catch(() => []),
   ]);
 
   return {
@@ -292,5 +302,6 @@ export async function downloadAllFromFirestore(): Promise<FullDataset> {
     beepulo,
     fejSaru,
     saruSpecs,
+    orders,
   };
 }

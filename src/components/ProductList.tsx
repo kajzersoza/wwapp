@@ -24,6 +24,8 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
+  ShoppingCart,
+  Link2,
 } from 'lucide-react';
 
 interface ProductListProps {
@@ -54,6 +56,7 @@ export const ProductList: React.FC<ProductListProps> = ({
     exportCsv,
     getProductTotalStock,
     getProductStockBreakdown,
+    getProductOrderSummary,
   } = useProducts();
 
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -768,6 +771,32 @@ export const ProductList: React.FC<ProductListProps> = ({
                         )}
                       </>
                     )}
+                    {(() => {
+                      const ord = getProductOrderSummary(p.id);
+                      if (ord.directOrders.length > 0) {
+                        return (
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold bg-sky-100 text-sky-900 border border-sky-300"
+                            title={`Rendelve: ${ord.directOrders[0].statusz}`}
+                          >
+                            <ShoppingCart className="w-3 h-3 text-sky-700" />
+                            <span>Rendelve ({ord.directOrders[0].statusz})</span>
+                          </span>
+                        );
+                      }
+                      if (ord.relatedOrders.length > 0) {
+                        return (
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold bg-amber-50 text-amber-900 border border-amber-300"
+                            title={`Kapcsolódó termék megrendelve`}
+                          >
+                            <Link2 className="w-3 h-3 text-amber-700" />
+                            <span>Kapcs. Rendelés</span>
+                          </span>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
 
                   {/* Gyári Kód (No # character) */}
@@ -919,6 +948,32 @@ export const ProductList: React.FC<ProductListProps> = ({
                                       )}
                                     </>
                                   )}
+                                  {(() => {
+                                    const ord = getProductOrderSummary(p.id);
+                                    if (ord.directOrders.length > 0) {
+                                      return (
+                                        <span
+                                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-100 text-sky-900 border border-sky-300"
+                                          title={`Rendelve: ${ord.directOrders[0].statusz} (${ord.directOrders.length} tétel)`}
+                                        >
+                                          <ShoppingCart className="w-2.5 h-2.5 text-sky-700" />
+                                          <span>Rendelve ({ord.directOrders[0].statusz})</span>
+                                        </span>
+                                      );
+                                    }
+                                    if (ord.relatedOrders.length > 0) {
+                                      return (
+                                        <span
+                                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-900 border border-amber-300"
+                                          title={`Kapcsolódó termék megrendelve: ${ord.relatedOrders[0].relatedProductId}`}
+                                        >
+                                          <Link2 className="w-2.5 h-2.5 text-amber-700" />
+                                          <span>Kapcs. Rendelés</span>
+                                        </span>
+                                      );
+                                    }
+                                    return null;
+                                  })()}
                                 </div>
                               </div>
                             </td>
@@ -1003,6 +1058,32 @@ export const ProductList: React.FC<ProductListProps> = ({
                               )}
                             </>
                           )}
+                          {(() => {
+                            const ord = getProductOrderSummary(p.id);
+                            if (ord.directOrders.length > 0) {
+                              return (
+                                <span
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold bg-sky-100 text-sky-900 border border-sky-300"
+                                  title={`Rendelve: ${ord.directOrders[0].statusz}`}
+                                >
+                                  <ShoppingCart className="w-3 h-3 text-sky-700" />
+                                  <span>Rendelve ({ord.directOrders[0].statusz})</span>
+                                </span>
+                              );
+                            }
+                            if (ord.relatedOrders.length > 0) {
+                              return (
+                                <span
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold bg-amber-50 text-amber-900 border border-amber-300"
+                                  title={`Kapcsolódó termék megrendelve`}
+                                >
+                                  <Link2 className="w-3 h-3 text-amber-700" />
+                                  <span>Kapcs. Rendelés</span>
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
                         </div>
                       </div>
 

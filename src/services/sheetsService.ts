@@ -12,6 +12,7 @@ import {
   SARU_CROSS_SECTIONS,
   KanbanItem,
   KanbanStatus,
+  Order,
 } from '../types';
 import { getBaseProductId } from '../utils/productUtils';
 
@@ -2065,6 +2066,189 @@ export function exportKanbanToCsv(items: KanbanItem[]): string {
   return Papa.unparse(rows, {
     quotes: true,
   });
+}
+
+/**
+ * Helper to normalize header keys: lowercases, strips accents and non-alphanumerics
+ */
+function normalizeHeaderKey(str: string): string {
+  return (str || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Parses raw CSV text into Order array (Rendelés worksheet)
+ * Expected columns: Rendelés ID, Termék ID, Státusz, Dátum, Dátum Megrendelve, Dátum Raktárban
+ */
+export function parseOrdersCsv(csvText: string): Order[] {
+  const parsed = Papa.parse<Record<string, string>>(csvText, {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: (h) => h.trim(),
+  });
+
+  if (!parsed.data || parsed.data.length === 0) return [];
+
+  const orders: Order[] = [];
+
+  for (let i = 0; i < parsed.data.length; i++) {
+    const row = parsed.data[i];
+    if (!row || typeof row !== 'object') continue;
+
+    const findKey = (patterns: string[]): string | undefined => {
+      return Object.keys(row).find((k) => {
+        const norm = normalizeHeaderKey(k);
+        return patterns.some((p) => norm === p || norm.includes(p));
+      });
+    };
+
+    const getVal = (patterns: string[]): string => {
+      const key = findKey(patterns);
+      return (key ? row[key] : '')?.trim() || '';
+    };
+
+    // Rendelés ID
+    const rendelesIdKey = findKey(['rendelesid', 'orderid', 'rendeles', 'id']);
+    const rawRendelesId = (rendelesIdKey ? row[rendelesIdKey] : '')?.trim() || '';
+    const rendelesId = rawRendelesId.replace(/^["']+|["']+$/g, '').trim();
+
+    // Termék ID
+    const termekIdKey = findKey(['termekid', 'productid', 'termek', 'product', 'cikkszam', 'cikk']);
+    const rawTermekId = (termekIdKey ? row[termekIdKey] : '')?.trim() || '';
+    const termekId = rawTermekId.replace(/^["']+|["']+$/g, '').trim();
+
+    if (!rendelesId && !termekId) continue;
+    const finalId = rendelesId || `REND-${String(i + 1).padStart(3, '0')}`;
+
+    // Státusz
+    const statuszKey = findKey(['statusz', 'status', 'allapot']);
+    const statusz = (statuszKey ? row[statuszKey] : '')?.trim() || 'Megrendelve';
+
+    // Dátum
+    const datumKey = findKey(['datum', 'date', 'letrehozva']);
+    const datum = (datumKey ? row[datumKey] : '')?.trim() || '';
+
+    // Dátum Megrendelve
+    const datumMegrKey = findKey(['datummegrendelve', 'megrendelve', 'ordered', 'rendelesdatum']);
+    const datumMegrendelve = (datumMegrKey ? row[datumMegrKey] : '')?.trim() || '';
+
+    // Dátum Raktárban
+    const datumRaktKey = findKey(['datumraktarban', 'raktarban', 'warehouse', 'megerkezett', 'beerkezve', 'atveve']);
+    const datumRaktarban = (datumRaktKey ? row[datumRaktKey] : '')?.trim() || '';
+
+    // Mennyiség
+    const qtyKey = findKey(['mennyiseg', 'quantity', 'qty', 'db']);
+    const mennyiseg = qtyKey && row[qtyKey] ? Number(row[qtyKey]) || row[qtyKey].trim() : undefined;
+
+    // Megjegyzés
+    const noteKey = findKey(['megjegyzes', 'note', 'leiras', 'description']);
+    const megjegyzes = noteKey ? row[noteKey]?.trim() : undefined;
+
+    // Beszállító
+    const supplierKey = findKey(['beszallito', 'supplier', 'partner']);
+    const beszallito = supplierKey ? row[supplierKey]?.trim() : undefined;
+
+    // Custom fields
+    const matchedKeys = new Set([
+      rendelesIdKey,
+      termekIdKey,
+      statuszKey,
+      datumKey,
+      datumMegrKey,
+      datumRaktKey,
+      qtyKey,
+      noteKey,
+      supplierKey,
+    ].filter(Boolean) as string[]);
+
+    const customFields: Record<string, string> = {};
+    for (const [key, val] of Object.entries(row)) {
+      if (!matchedKeys.has(key) && key.trim() && val && val.trim()) {
+        customFields[key.trim()] = val.trim();
+      }
+    }
+
+    orders.push({
+      id: finalId,
+      rendelesId: finalId,
+      termekId: termekId || '-',
+      statusz,
+      datum,
+      datumMegrendelve,
+      datumRaktarban,
+      mennyiseg,
+      megjegyzes,
+      beszallito,
+      customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
+    });
+  }
+
+  return orders;
+}
+
+/**
+ * Converts Orders back into Rendelés Google Sheets formatted CSV string
+ * Columns: Rendelés ID, Termék ID, Státusz, Dátum, Dátum Megrendelve, Dátum Raktárban
+ */
+export function exportOrdersToCsv(orders: Order[]): string {
+  const rows = orders.map((o) => ({
+    'Rendelés ID': o.rendelesId || o.id,
+    'Termék ID': o.termekId,
+    'Státusz': o.statusz,
+    'Dátum': o.datum || '',
+    'Dátum Megrendelve': o.datumMegrendelve || '',
+    'Dátum Raktárban': o.datumRaktarban || '',
+    'Mennyiség': o.mennyiseg !== undefined && o.mennyiseg !== null ? String(o.mennyiseg) : '',
+    'Beszállító': o.beszallito || '',
+    'Megjegyzés': o.megjegyzes || '',
+    ...(o.customFields || {}),
+  }));
+
+  return Papa.unparse(rows, {
+    quotes: true,
+  });
+}
+
+/**
+ * Fetches Orders from Google Sheet ('Rendelés' / 'Rendeles' worksheet)
+ */
+export async function fetchOrdersFromGoogleSheet(sheetUrl?: string): Promise<Order[]> {
+  const url = sheetUrl || DEFAULT_GOOGLE_SHEET_URL;
+  const sheetId = extractSheetId(url);
+  if (!sheetId) return [];
+
+  const trySheets = [
+    'Rendelés',
+    'Rendeles',
+    'Rendelések',
+    'Rendelesek',
+    'Orders',
+    'Order',
+    'RENDELÉS',
+    'RENDELES',
+  ];
+
+  for (const sheetName of trySheets) {
+    try {
+      const encodedSheet = encodeURIComponent(sheetName);
+      const targetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodedSheet}`;
+      const response = await fetch(targetUrl);
+      if (response.ok) {
+        const csvText = await response.text();
+        const records = parseOrdersCsv(csvText);
+        if (records.length > 0) {
+          return records;
+        }
+      }
+    } catch {
+      // Continue to next sheet variant
+    }
+  }
+
+  return [];
 }
 
 

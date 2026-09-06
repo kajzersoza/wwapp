@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useProducts } from '../context/ProductContext';
-import { Layers, ChevronDown, Check, Search, X, FolderTree } from 'lucide-react';
+import { Layers, ChevronDown, Check } from 'lucide-react';
 import { getCategoryColor } from '../utils/categoryColors';
 
 interface CategoryDropdownProps {
@@ -20,12 +20,9 @@ export const CategoryDropdown: React.FC<CategoryDropdownProps> = ({
     filters,
     toggleFilterItem,
     clearFilterKey,
-    totalCount,
   } = useProducts();
   const [isOpen, setIsOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Selected categories list
   const selectedCategories = React.useMemo(() => {
@@ -52,13 +49,6 @@ export const CategoryDropdown: React.FC<CategoryDropdownProps> = ({
     return map;
   }, [products]);
 
-  // Filtered categories based on inner search
-  const filteredCategories = React.useMemo(() => {
-    if (!searchQuery.trim()) return categories;
-    const q = searchQuery.toLowerCase().trim();
-    return categories.filter((cat) => cat.toLowerCase().includes(q));
-  }, [categories, searchQuery]);
-
   // Close dropdown on click outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -68,7 +58,6 @@ export const CategoryDropdown: React.FC<CategoryDropdownProps> = ({
     };
     if (isOpen) {
       document.addEventListener('mousedown', handleClickOutside);
-      setTimeout(() => searchInputRef.current?.focus(), 50);
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
@@ -135,33 +124,8 @@ export const CategoryDropdown: React.FC<CategoryDropdownProps> = ({
 
         {isOpen && (
           <div className="absolute top-full left-0 mt-1.5 w-72 sm:w-80 bg-white border border-stone-200 rounded-xl shadow-xl z-50 overflow-hidden flex flex-col max-h-[420px] animate-in fade-in slide-in-from-top-1 duration-150">
-            {/* Header / Search */}
-            <div className="p-2.5 border-b border-stone-100 bg-stone-50">
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 text-stone-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  ref={searchInputRef}
-                  id="category-search-input-header"
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Kategória keresése..."
-                  className="w-full bg-white border border-stone-200 rounded-lg pl-8 pr-7 py-1.5 text-xs text-stone-800 focus:border-[#006067] outline-none"
-                />
-                {searchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 p-0.5"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                )}
-              </div>
-            </div>
-
             {/* Quick Actions (Count & Clear) */}
-            <div className="flex items-center justify-between px-3 py-1.5 bg-stone-50/80 border-b border-stone-100 text-[11px] font-semibold text-stone-500">
+            <div className="flex items-center justify-between px-3 py-2 bg-stone-50/90 border-b border-stone-100 text-[11px] font-semibold text-stone-500">
               <span>{selectedCount} kiválasztva</span>
               {selectedCount > 0 && (
                 <button
@@ -175,8 +139,8 @@ export const CategoryDropdown: React.FC<CategoryDropdownProps> = ({
             </div>
 
             {/* List with checkboxes and distinct category colors */}
-            <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5 max-h-[280px]">
-              {filteredCategories.map((cat) => {
+            <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5 max-h-[320px]">
+              {categories.map((cat) => {
                 const count = categoryCounts[cat] || 0;
                 const isSelected = selectedCategories.includes(cat);
                 const palette = getCategoryColor(cat);
@@ -219,9 +183,9 @@ export const CategoryDropdown: React.FC<CategoryDropdownProps> = ({
                 );
               })}
 
-              {filteredCategories.length === 0 && (
+              {categories.length === 0 && (
                 <div className="p-4 text-center text-xs text-stone-400">
-                  Nincs találat a(z) "{searchQuery}" kifejezésre.
+                  Nincsenek kategóriák.
                 </div>
               )}
             </div>
@@ -274,33 +238,8 @@ export const CategoryDropdown: React.FC<CategoryDropdownProps> = ({
 
       {isOpen && (
         <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-stone-200 rounded-xl shadow-2xl z-50 overflow-hidden flex flex-col max-h-[380px] animate-in fade-in slide-in-from-top-1 duration-150">
-          {/* Quick Search */}
-          <div className="p-2.5 border-b border-stone-100 bg-stone-50">
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-stone-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <input
-                ref={searchInputRef}
-                id="category-search-input-filter"
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Kategória keresése..."
-                className="w-full bg-white border border-stone-200 rounded-lg pl-8 pr-7 py-2 text-xs text-stone-800 focus:border-[#006067] outline-none"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 p-1"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-          </div>
-
           {/* Quick Actions (Count & Clear) */}
-          <div className="flex items-center justify-between px-3 py-1.5 bg-stone-50/80 border-b border-stone-100 text-[11px] font-semibold text-stone-500">
+          <div className="flex items-center justify-between px-3 py-2 bg-stone-50/90 border-b border-stone-100 text-[11px] font-semibold text-stone-500">
             <span>{selectedCount} kiválasztva</span>
             {selectedCount > 0 && (
               <button
@@ -315,7 +254,7 @@ export const CategoryDropdown: React.FC<CategoryDropdownProps> = ({
 
           {/* List items with checkboxes */}
           <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
-            {filteredCategories.map((cat) => {
+            {categories.map((cat) => {
               const count = categoryCounts[cat] || 0;
               const isSelected = selectedCategories.includes(cat);
               const palette = getCategoryColor(cat);
@@ -358,9 +297,9 @@ export const CategoryDropdown: React.FC<CategoryDropdownProps> = ({
               );
             })}
 
-            {filteredCategories.length === 0 && (
+            {categories.length === 0 && (
               <div className="p-4 text-center text-xs text-stone-400">
-                Nem található kategória "{searchQuery}" névvel.
+                Nincsenek kategóriák.
               </div>
             )}
           </div>

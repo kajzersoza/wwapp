@@ -11,6 +11,7 @@ interface MultiSelectDropdownProps {
   onSelectAll?: (values: string[]) => void;
   onClear?: () => void;
   isCategory?: boolean;
+  hideSearch?: boolean;
   itemCounts?: Record<string, number>;
   icon?: React.ReactNode;
   className?: string;
@@ -26,6 +27,7 @@ export const MultiSelectDropdown: React.FC<MultiSelectDropdownProps> = ({
   onSelectAll,
   onClear,
   isCategory = false,
+  hideSearch = false,
   itemCounts = {},
   icon,
   className = '',
@@ -38,12 +40,14 @@ export const MultiSelectDropdown: React.FC<MultiSelectDropdownProps> = ({
 
   const selectedCount = selectedValues.length;
 
+  const shouldShowSearch = !isCategory && !hideSearch && options.length > 5;
+
   // Filter options by internal search query
   const filteredOptions = React.useMemo(() => {
-    if (!searchQuery.trim()) return options;
+    if (!shouldShowSearch || !searchQuery.trim()) return options;
     const q = searchQuery.toLowerCase().trim();
     return options.filter((opt) => opt.toLowerCase().includes(q));
-  }, [options, searchQuery]);
+  }, [options, searchQuery, shouldShowSearch]);
 
   // Click outside listener
   useEffect(() => {
@@ -54,12 +58,14 @@ export const MultiSelectDropdown: React.FC<MultiSelectDropdownProps> = ({
     };
     if (isOpen) {
       document.addEventListener('mousedown', handleClickOutside);
-      setTimeout(() => searchInputRef.current?.focus(), 50);
+      if (shouldShowSearch) {
+        setTimeout(() => searchInputRef.current?.focus(), 50);
+      }
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [isOpen]);
+  }, [isOpen, shouldShowSearch]);
 
   const handleSelectAll = () => {
     if (onSelectAll) {
@@ -159,8 +165,8 @@ export const MultiSelectDropdown: React.FC<MultiSelectDropdownProps> = ({
       {/* Popover Menu with Checkboxes */}
       {isOpen && (
         <div className="absolute top-full left-0 mt-1.5 w-full min-w-[240px] sm:min-w-[280px] bg-white border border-stone-200 rounded-xl shadow-xl z-50 overflow-hidden flex flex-col max-h-[380px] animate-in fade-in slide-in-from-top-1 duration-150">
-          {/* Search Box */}
-          {options.length > 5 && (
+          {/* Search Box (hidden for category) */}
+          {shouldShowSearch && (
             <div className="p-2 border-b border-stone-100 bg-stone-50">
               <div className="relative">
                 <Search className="w-3.5 h-3.5 text-stone-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />

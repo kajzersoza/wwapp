@@ -9,6 +9,7 @@ import {
   MapPin,
   ClipboardList,
   Kanban,
+  ShoppingCart,
 } from 'lucide-react';
 
 interface MobileNavProps {
@@ -70,6 +71,21 @@ export const MobileNav: React.FC<MobileNavProps> = ({
       >
         <Kanban className="w-4.5 h-4.5 mb-0.5" />
         <span>Kanban</span>
+      </button>
+
+      {/* Rendelés */}
+      <button
+        type="button"
+        id="mobile-nav-rendeles"
+        onClick={() => setActiveTab('rendeles')}
+        className={`flex flex-col items-center justify-center py-1 px-1.5 rounded-xl text-[10px] transition-all cursor-pointer min-h-[44px] min-w-[46px] ${
+          activeTab === 'rendeles'
+            ? 'text-[#006067] font-extrabold bg-[#E0E9E8]/60'
+            : 'text-stone-500 hover:text-stone-900 font-medium'
+        }`}
+      >
+        <ShoppingCart className="w-4.5 h-4.5 mb-0.5" />
+        <span>Rendelés</span>
       </button>
 
       {/* Floating Action: Scanner */}

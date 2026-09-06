@@ -79,10 +79,25 @@ export type ActiveTab =
   | 'beepulo'
   | 'fejsaru'
   | 'saruspecs'
+  | 'rendeles'
   | 'detail'
   | 'scanner'
   | 'sync'
   | 'settings';
+
+export interface Order {
+  id: string; // Belső egyedi azonosító vagy rendelesId
+  rendelesId: string; // Rendelés ID (pl. REND-001)
+  termekId: string; // Termék ID
+  statusz: string; // Státusz (pl. Megrendelve, Raktárban, Folyamatban, Tervezett)
+  datum: string; // Dátum (rögzítés ideje)
+  datumMegrendelve: string; // Dátum Megrendelve
+  datumRaktarban: string; // Dátum Raktárban
+  mennyiseg?: number | string; // Mennyiség (db)
+  megjegyzes?: string; // Megjegyzés / Leírás
+  beszallito?: string; // Beszállító neve / kódja
+  customFields?: Record<string, string>;
+}
 
 export type KanbanStatus = 'Terv' | 'Folyamatban' | 'Teszt' | 'Befejezve';
 

@@ -13,6 +13,7 @@ import {
   MapPin,
   ClipboardList,
   Kanban,
+  ShoppingCart,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -32,6 +33,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     inspections,
     kanban,
     saruSpecs,
+    orders,
     clearSelectedPosition,
     lastSyncedAt,
     isSyncing,
@@ -59,6 +61,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Kanban Tábla',
       icon: <Kanban className="w-4 h-4 text-amber-600" />,
       badge: kanban.length.toString(),
+    },
+    {
+      id: 'rendeles',
+      label: 'Rendelés',
+      icon: <ShoppingCart className="w-4 h-4 text-emerald-600" />,
+      badge: orders.length.toString(),
     },
     {
       id: 'inspections',

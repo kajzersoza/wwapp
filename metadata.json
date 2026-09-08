@@ -1,7 +1,9 @@
 {
-  "name": "Termék és Raktárkezelő",
-  "description": "Ipari raktárkezelő, termékmenedzser és alkatrész-nyilvántartó alkalmazás valós idejű Firebase Firestore felhőadatbázissal, Google Sheets szinkronizációval és import-export funkciókkal.",
-  "requestFramePermissions": [],
+  "name": "World Wires Kft. - Termék és Raktárkezelő",
+  "description": "World Wires Kft. - Ipari raktárkezelő, termékmenedzser és alkatrész-nyilvántartó alkalmazás valós idejű Firebase Firestore felhőadatbázissal, Google Sheets szinkronizációval és import-export funkciókkal.",
+  "requestFramePermissions": [
+    "camera"
+  ],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]

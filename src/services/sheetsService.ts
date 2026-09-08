@@ -1,4 +1,6 @@
 import Papa from 'papaparse';
+import JSZip from 'jszip';
+import { NOTE_HYPERLINKS_MAP, getNotePageCount } from '../data/noteHyperlinksMap';
 import {
   Product,
   WarehousePosition,
@@ -13,6 +15,7 @@ import {
   KanbanItem,
   KanbanStatus,
   Order,
+  ProductNote,
 } from '../types';
 import { getBaseProductId } from '../utils/productUtils';
 
@@ -2246,6 +2249,354 @@ export async function fetchOrdersFromGoogleSheet(sheetUrl?: string): Promise<Ord
 
   return [];
 }
+
+/**
+ * Parses raw CSV text into ProductNote array matching Note worksheet columns:
+ * Note ID, Termék ID, Név, Leírás, Image, Documents, Date, URL, Név választás
+ */
+export function parseNotesCsv(csvText: string, hyperlinksByRow?: Map<number, string>): ProductNote[] {
+  const parsed = Papa.parse<Record<string, string>>(csvText, {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: (header) => header.trim(),
+  });
+
+  const notes: ProductNote[] = [];
+
+  for (let i = 0; i < parsed.data.length; i++) {
+    const row = parsed.data[i];
+
+    // Find Note ID column
+    const noteIdKey = Object.keys(row).find(
+      (k) =>
+        k.toLowerCase() === 'note id' ||
+        k.toLowerCase() === 'noteid' ||
+        k.toLowerCase() === 'note_id' ||
+        k.toLowerCase() === 'jegyzet id' ||
+        k.toLowerCase() === 'jegyzetid' ||
+        k.toLowerCase() === 'id'
+    );
+    const rawNoteId = (noteIdKey ? row[noteIdKey] : row['Note ID'] || row['note_id'] || '')?.trim() || '';
+    const noteId = rawNoteId ? rawNoteId.replace(/^["']+|["']+$/g, '').trim() : `NOTE-${1000 + i + 1}`;
+
+    // Find Termék ID column
+    const termekIdKey = Object.keys(row).find(
+      (k) =>
+        k.toLowerCase().includes('termék id') ||
+        k.toLowerCase().includes('termek id') ||
+        k.toLowerCase().includes('termekid') ||
+        k.toLowerCase().includes('termékid') ||
+        k.toLowerCase().includes('product id') ||
+        k.toLowerCase().includes('productid')
+    );
+    const rawTermekId = (termekIdKey ? row[termekIdKey] : row['Termék ID'] || row['Termek ID'] || '')?.trim() || '';
+    const termekId = rawTermekId.replace(/^["']+|["']+$/g, '').trim();
+
+    if (!termekId && !rawNoteId) continue;
+
+    // Név column
+    const nevKey = Object.keys(row).find(
+      (k) =>
+        k.toLowerCase() === 'név' ||
+        k.toLowerCase() === 'nev' ||
+        k.toLowerCase() === 'name' ||
+        k.toLowerCase() === 'title' ||
+        k.toLowerCase() === 'tárgy' ||
+        k.toLowerCase() === 'targy'
+    );
+    const nev = (nevKey ? row[nevKey] : row['Név'] || row['Nev'] || 'Jegyzet')?.trim() || 'Jegyzet';
+
+    // Leírás column
+    const leirasKey = Object.keys(row).find(
+      (k) =>
+        k.toLowerCase() === 'leírás' ||
+        k.toLowerCase() === 'leiras' ||
+        k.toLowerCase() === 'description' ||
+        k.toLowerCase() === 'szöveg' ||
+        k.toLowerCase() === 'szoveg'
+    );
+    const leiras = (leirasKey ? row[leirasKey] : row['Leírás'] || row['Leiras'] || '')?.trim();
+
+    // Image column
+    const imageKey = Object.keys(row).find(
+      (k) =>
+        k.toLowerCase() === 'image' ||
+        k.toLowerCase() === 'kép' ||
+        k.toLowerCase() === 'kep' ||
+        k.toLowerCase() === 'fotó' ||
+        k.toLowerCase() === 'foto'
+    );
+    const image = (imageKey ? row[imageKey] : row['Image'] || row['image'] || '')?.trim();
+
+    // Documents column
+    const docKey = Object.keys(row).find(
+      (k) =>
+        k.toLowerCase() === 'documents' ||
+        k.toLowerCase() === 'dokumentumok' ||
+        k.toLowerCase() === 'document' ||
+        k.toLowerCase() === 'dokumentum' ||
+        k.toLowerCase() === 'docs'
+    );
+    const documents = (docKey ? row[docKey] : row['Documents'] || row['documents'] || '')?.trim();
+
+    // Date column
+    const dateKey = Object.keys(row).find(
+      (k) =>
+        k.toLowerCase() === 'date' ||
+        k.toLowerCase() === 'dátum' ||
+        k.toLowerCase() === 'datum' ||
+        k.toLowerCase() === 'időpont'
+    );
+    const date = (dateKey ? row[dateKey] : row['Date'] || row['Dátum'] || '')?.trim();
+
+    // URL column
+    const urlKey = Object.keys(row).find(
+      (k) =>
+        k.toLowerCase() === 'url' ||
+        k.toLowerCase() === 'link' ||
+        k.toLowerCase() === 'hivatkozás' ||
+        k.toLowerCase() === 'hivatkozas'
+    );
+    let rawUrl = (urlKey ? row[urlKey] : row['URL'] || row['url'] || '')?.trim();
+    if (rawUrl) {
+      const matchHyperlink = rawUrl.match(/=HYPERLINK\(\s*["']([^"']+)["']/i);
+      if (matchHyperlink) {
+        rawUrl = matchHyperlink[1];
+      }
+      rawUrl = rawUrl.replace(/^["']+|["']+$/g, '').trim();
+    }
+
+    // Check if the URL is a textual placeholder (such as 'PDF', 'pdf', 'URL', 'KÉP', etc.) or missing
+    const isPlaceholder =
+      !rawUrl ||
+      rawUrl.toLowerCase() === 'pdf' ||
+      rawUrl.toLowerCase() === 'url' ||
+      rawUrl.toLowerCase() === 'kép' ||
+      rawUrl.toLowerCase() === 'kep' ||
+      rawUrl.toLowerCase() === 'vázlatos kép' ||
+      rawUrl.toLowerCase() === 'vazlatos kep' ||
+      rawUrl.toLowerCase() === 'felhelyezés' ||
+      rawUrl.toLowerCase() === 'felhelyezes' ||
+      rawUrl.toLowerCase() === 'link' ||
+      (!rawUrl.startsWith('http') && !rawUrl.startsWith('//') && !rawUrl.includes('/'));
+
+    let finalUrl = rawUrl;
+    if (isPlaceholder) {
+      // Row 1 is header, row index starts at 0 -> Excel row is i + 2
+      const rowNum = i + 2;
+      const liveXlsxUrl = hyperlinksByRow?.get(rowNum);
+      if (liveXlsxUrl) {
+        finalUrl = liveXlsxUrl;
+      } else if (noteId && NOTE_HYPERLINKS_MAP[noteId]) {
+        finalUrl = NOTE_HYPERLINKS_MAP[noteId];
+      }
+    }
+    const url = finalUrl;
+
+    // Név választás column
+    const nevValasztasKey = Object.keys(row).find(
+      (k) =>
+        k.toLowerCase() === 'név választás' ||
+        k.toLowerCase() === 'nev valasztas' ||
+        k.toLowerCase() === 'név választó' ||
+        k.toLowerCase() === 'nev valaszto' ||
+        k.toLowerCase() === 'névválasztás' ||
+        k.toLowerCase() === 'nevvalasztas' ||
+        k.toLowerCase() === 'felelős' ||
+        k.toLowerCase() === 'felelos' ||
+        k.toLowerCase() === 'készítette' ||
+        k.toLowerCase() === 'author'
+    );
+    const nevValasztas = (nevValasztasKey ? row[nevValasztasKey] : row['Név választás'] || row['Nev valasztas'] || '')?.trim();
+
+    // Custom fields
+    const standardKeys = new Set([
+      'Note ID',
+      'note_id',
+      'Termék ID',
+      'Termek ID',
+      'Név',
+      'Nev',
+      'Leírás',
+      'Leiras',
+      'Image',
+      'Documents',
+      'Date',
+      'Dátum',
+      'Datum',
+      'URL',
+      'Név választás',
+      'Nev valasztas',
+    ]);
+
+    const customFields: Record<string, string> = {};
+    for (const [k, v] of Object.entries(row)) {
+      if (!standardKeys.has(k) && v && typeof v === 'string' && v.trim()) {
+        customFields[k] = v.trim();
+      }
+    }
+
+    notes.push({
+      id: noteId,
+      termekId: termekId || 'Ismeretlen',
+      nev,
+      leiras: leiras || undefined,
+      image: image || undefined,
+      documents: documents || undefined,
+      date: date || undefined,
+      url: url || undefined,
+      pageCount: getNotePageCount(noteId, url),
+      nevValasztas: nevValasztas || undefined,
+      customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
+    });
+  }
+
+  return notes;
+}
+
+/**
+ * Extracts live formula hyperlinks from the Note worksheet inside the Google Sheets XLSX export.
+ * This directly retrieves true Google Drive and web URLs from =HYPERLINK("...", "PDF") formulas
+ * that are otherwise stripped into plain display text ("PDF") by the Google Sheets CSV export.
+ */
+export async function extractHyperlinksFromXlsx(sheetId: string): Promise<Map<number, string>> {
+  const hMap = new Map<number, string>();
+  try {
+    const targetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=xlsx`;
+    const response = await fetch(targetUrl);
+    if (!response.ok) return hMap;
+    const arrayBuffer = await response.arrayBuffer();
+    const zip = await JSZip.loadAsync(arrayBuffer);
+
+    // Find Note sheet id from workbook.xml
+    const wbXml = await zip.file('xl/workbook.xml')?.async('string');
+    if (!wbXml) return hMap;
+
+    const sheetMatches = [...wbXml.matchAll(/<sheet[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"/g)];
+    const noteSheet = sheetMatches.find((s) => /note/i.test(s[1]));
+    if (!noteSheet) return hMap;
+    const rId = noteSheet[2];
+
+    const relsXml = await zip.file('xl/_rels/workbook.xml.rels')?.async('string');
+    if (!relsXml) return hMap;
+    const relMatch = relsXml.match(new RegExp(`Id="${rId}"[^>]*Target="([^"]+)"`));
+    if (!relMatch) return hMap;
+
+    const targetPath = relMatch[1].startsWith('xl/')
+      ? relMatch[1]
+      : relMatch[1].startsWith('/')
+      ? `xl${relMatch[1]}`
+      : `xl/${relMatch[1].replace(/^\//, '')}`;
+
+    const sheetXml = await zip.file(targetPath)?.async('string');
+    if (!sheetXml) return hMap;
+
+    // 1. Extract =HYPERLINK("url", "text") cell formulas
+    const hRegex = /<c r="[A-Z]+(\d+)"[^>]*><f>HYPERLINK\(&quot;([^&]+)&quot;,\s*&quot;([^&]*)&quot;\)<\/f>/g;
+    let m;
+    while ((m = hRegex.exec(sheetXml)) !== null) {
+      const row = parseInt(m[1], 10);
+      const u = m[2].replace(/&amp;/g, '&').trim();
+      if (u && !u.startsWith('Higító') && u.length > 5) {
+        hMap.set(row, u);
+      }
+    }
+
+    // 2. Extract standard cell hyperlinks in sheet relationships if any
+    const sheetRelsPath = targetPath.replace('worksheets/', 'worksheets/_rels/') + '.rels';
+    const sheetRelsXml = await zip.file(sheetRelsPath)?.async('string');
+    if (sheetRelsXml) {
+      const relTargets = new Map<string, string>();
+      const relMatches = [...sheetRelsXml.matchAll(/<Relationship[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"/g)];
+      for (const rm of relMatches) {
+        relTargets.set(rm[1], rm[2].replace(/&amp;/g, '&'));
+      }
+      const cellHlMatches = [...sheetXml.matchAll(/<hyperlink[^>]*ref="[A-Z]+(\d+)"[^>]*r:id="([^"]+)"/g)];
+      for (const chm of cellHlMatches) {
+        const row = parseInt(chm[1], 10);
+        const target = relTargets.get(chm[2]);
+        if (target && !hMap.has(row)) {
+          hMap.set(row, target);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('XLSX live hyperlink extraction skipped or failed:', err);
+  }
+  return hMap;
+}
+
+/**
+ * Converts ProductNotes back into Note Google Sheets formatted CSV string
+ * Columns: Note ID, Termék ID, Név, Leírás, Image, Documents, Date, URL, Név választás
+ */
+export function exportNotesToCsv(notes: ProductNote[]): string {
+  const rows = notes.map((n) => ({
+    'Note ID': n.id,
+    'Termék ID': n.termekId,
+    'Név': n.nev,
+    'Leírás': n.leiras || '',
+    'Image': n.image || '',
+    'Documents': n.documents || '',
+    'Date': n.date || '',
+    'URL': n.url || '',
+    'Név választás': n.nevValasztas || '',
+    ...(n.customFields || {}),
+  }));
+
+  return Papa.unparse(rows, {
+    quotes: true,
+  });
+}
+
+/**
+ * Fetches Notes from Google Sheet ('Note' / 'Notes' / 'Notesz' / 'Jegyzetek' worksheet)
+ */
+export async function fetchNotesFromGoogleSheet(sheetUrl?: string): Promise<ProductNote[]> {
+  const url = sheetUrl || DEFAULT_GOOGLE_SHEET_URL;
+  const sheetId = extractSheetId(url);
+  if (!sheetId) return [];
+
+  // Start extracting live formula hyperlinks from XLSX in parallel
+  const liveHyperlinksPromise = extractHyperlinksFromXlsx(sheetId).catch(() => new Map<number, string>());
+
+  const trySheets = [
+    'Note',
+    'Notes',
+    'Notesz',
+    'Jegyzetek',
+    'Jegyzet',
+    'NOTE',
+    'NOTES',
+    'Termék Note',
+    'Termek Note',
+  ];
+
+  for (const sheetName of trySheets) {
+    try {
+      const encodedSheet = encodeURIComponent(sheetName);
+      const targetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodedSheet}`;
+      const response = await fetch(targetUrl);
+      if (response.ok) {
+        const csvText = await response.text();
+        // Wait for live hyperlinks with a reasonable timeout so we don't block
+        const liveHyperlinks = await Promise.race([
+          liveHyperlinksPromise,
+          new Promise<Map<number, string>>((resolve) => setTimeout(() => resolve(new Map()), 2500)),
+        ]);
+        const records = parseNotesCsv(csvText, liveHyperlinks);
+        if (records.length > 0) {
+          return records;
+        }
+      }
+    } catch {
+      // Continue to next sheet variant
+    }
+  }
+
+  return [];
+}
+
 
 
 

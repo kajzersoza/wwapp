@@ -16,6 +16,7 @@ import {
   KanbanItem,
   KanbanStatus,
   Order,
+  ProductNote,
 } from '../types';
 import { INITIAL_PRODUCTS } from '../data/initialProducts';
 import { INITIAL_POSITIONS } from '../data/initialPositions';
@@ -28,6 +29,7 @@ import { INITIAL_BEEPULO } from '../data/initialBeepulo';
 import { INITIAL_FEJSARU } from '../data/initialFejSaru';
 import { INITIAL_SARU_SPECS } from '../data/initialSaruSpecs';
 import { INITIAL_ORDERS } from '../data/initialOrders';
+import { INITIAL_NOTES } from '../data/initialNotes';
 import {
   getBaseProductId,
   getNewProductId,
@@ -55,6 +57,7 @@ import {
   fetchFejSaruFromGoogleSheet,
   fetchSaruSpecsFromGoogleSheet,
   fetchOrdersFromGoogleSheet,
+  fetchNotesFromGoogleSheet,
   parseProductsCsv,
   parsePositionsCsv,
   parseInventoryCsv,
@@ -66,6 +69,7 @@ import {
   parseFejSaruCsv,
   parseSaruSpecsCsv,
   parseOrdersCsv,
+  parseNotesCsv,
   exportProductsToCsv,
   exportPositionsToCsv,
   exportInventoryToCsv,
@@ -77,7 +81,9 @@ import {
   exportFejSaruToCsv,
   exportSaruSpecsToCsv,
   exportOrdersToCsv,
+  exportNotesToCsv,
 } from '../services/sheetsService';
+import { resolveNoteUrl, NOTE_HYPERLINKS_MAP, getNotePageCount } from '../data/noteHyperlinksMap';
 import {
   FIRESTORE_COLLECTIONS,
   FullDataset,
@@ -162,6 +168,13 @@ interface ProductContextType {
   orders: Order[];
   selectedOrderId: string | null;
   setSelectedOrderId: (id: string | null) => void;
+
+  // Note (Termék Jegyzetek) state
+  notes: ProductNote[];
+  selectedNoteId: string | null;
+  setSelectedNoteId: (id: string | null) => void;
+  getNotesForProduct: (productId: string) => ProductNote[];
+  getNextNoteId: () => string;
 
   // Saru Segédtáblázat (Saru Keresztmetszet Mátrix 0.25..6.00 mm²) state
   saruSpecs: SaruSpec[];
@@ -306,6 +319,8 @@ interface ProductContextType {
   exportSaruSpecsCsv: () => string;
   importOrdersCsvText: (csvText: string) => number;
   exportOrdersCsv: () => string;
+  importNotesCsvText: (csvText: string) => number;
+  exportNotesCsv: () => string;
 
   // Firebase Firestore State & Actions
   isFirebaseConnected: boolean;
@@ -385,6 +400,11 @@ interface ProductContextType {
   addOrder: (order: Order) => Promise<void>;
   updateOrder: (id: string, updatedFields: Partial<Order>) => Promise<void>;
   deleteOrder: (id: string) => Promise<void>;
+
+  // Note CRUD
+  addNote: (note: Omit<ProductNote, 'id'> | ProductNote) => Promise<ProductNote>;
+  updateNote: (id: string, updatedFields: Partial<ProductNote>) => Promise<void>;
+  deleteNote: (id: string) => Promise<void>;
 }
 
 const STORAGE_KEY = 'kinetic_products_cache';
@@ -398,6 +418,7 @@ const BEEPULO_STORAGE_KEY = 'kinetic_beepulo_cache';
 const FEJSARU_STORAGE_KEY = 'kinetic_fejsaru_cache';
 const SARU_SPECS_STORAGE_KEY = 'kinetic_saruspecs_cache_v8';
 const ORDERS_STORAGE_KEY = 'kinetic_orders_cache_v1';
+const NOTES_STORAGE_KEY = 'kinetic_notes_cache_v1';
 const SYNC_TIME_KEY = 'kinetic_last_sync_time';
 const SHEET_URL_KEY = 'kinetic_sheet_url';
 
@@ -609,6 +630,36 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     return INITIAL_ORDERS;
   });
 
+  // Helper to repair/resolve note URLs if they are placeholders like 'PDF' or empty, and ensure accurate pageCount
+  const sanitizeNotes = (items: ProductNote[]): ProductNote[] => {
+    return items.map((n) => {
+      const resolvedUrl = resolveNoteUrl(n.id, n.url);
+      const effectiveUrl = resolvedUrl || n.url;
+      const computedPageCount = n.pageCount || getNotePageCount(n.id, effectiveUrl);
+      return {
+        ...n,
+        url: effectiveUrl,
+        pageCount: computedPageCount,
+      };
+    });
+  };
+
+  // Note (Termék Jegyzetek) state
+  const [notes, setNotes] = useState<ProductNote[]>(() => {
+    try {
+      const saved = localStorage.getItem(NOTES_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return sanitizeNotes(parsed);
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return sanitizeNotes(INITIAL_NOTES);
+  });
+
   // Unified canonical products list with Saru auto-inclusion
   const products = useMemo(() => {
     const unified = unifyProductList(rawProducts);
@@ -649,6 +700,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [selectedFejSaruId, setSelectedFejSaruId] = useState<string | null>(null);
   const [selectedSaruSpecId, setSelectedSaruSpecId] = useState<string | null>(null);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>('inventory');
   const [viewMode, setViewMode] = useState<ViewMode>('table');
   const [filters, setFilters] = useState<FilterState>(initialFilters);
@@ -762,6 +814,14 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     }
   }, [orders]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(NOTES_STORAGE_KEY, JSON.stringify(notes));
+    } catch (e) {
+      console.warn('LocalStorage save error (notes):', e);
+    }
+  }, [notes]);
+
   // Initial Firebase real-time listeners & database bootstrapping
   useEffect(() => {
     let unsubs: (() => void)[] = [];
@@ -797,6 +857,12 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
             setOrders(INITIAL_ORDERS);
             bulkSaveToFirestore(FIRESTORE_COLLECTIONS.ORDERS, INITIAL_ORDERS).catch(console.error);
           }
+          if (cloudData.notes && cloudData.notes.length > 0) {
+            setNotes(sanitizeNotes(cloudData.notes));
+          } else {
+            setNotes(sanitizeNotes(INITIAL_NOTES));
+            bulkSaveToFirestore(FIRESTORE_COLLECTIONS.NOTES, sanitizeNotes(INITIAL_NOTES)).catch(console.error);
+          }
 
           setIsFirebaseConnected(true);
           setFirebaseSyncTime(new Date().toLocaleTimeString('hu-HU'));
@@ -814,6 +880,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
             fejSaru,
             saruSpecs,
             orders: orders.length >= 20 ? orders : INITIAL_ORDERS,
+            notes: notes.length > 0 ? notes : INITIAL_NOTES,
           };
           const res = await uploadAllToFirestore(initialDataset);
           setFirebaseStats(res.stats);
@@ -883,6 +950,13 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
             }
           })
         );
+        unsubs.push(
+          subscribeToCollection<ProductNote>(FIRESTORE_COLLECTIONS.NOTES, (items) => {
+            if (items.length > 0) {
+              setNotes(sanitizeNotes(items));
+            }
+          })
+        );
 
         // Background check: attempt fetching the latest 28 items directly from Google Sheet if needed
         fetchOrdersFromGoogleSheet(sheetUrl)
@@ -892,6 +966,21 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
               bulkSaveToFirestore(FIRESTORE_COLLECTIONS.ORDERS, liveOrders).catch(console.error);
               try {
                 localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(liveOrders));
+              } catch {
+                // ignore
+              }
+            }
+          })
+          .catch(console.error);
+
+        fetchNotesFromGoogleSheet(sheetUrl)
+          .then((liveNotes) => {
+            if (liveNotes.length > 0) {
+              const sanitized = sanitizeNotes(liveNotes);
+              setNotes(sanitized);
+              bulkSaveToFirestore(FIRESTORE_COLLECTIONS.NOTES, sanitized).catch(console.error);
+              try {
+                localStorage.setItem(NOTES_STORAGE_KEY, JSON.stringify(sanitized));
               } catch {
                 // ignore
               }
@@ -985,6 +1074,12 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         setOrders(fetchedOrders);
       }
 
+      // 11. Fetch Note munkalap
+      const fetchedNotes = await fetchNotesFromGoogleSheet(targetUrl);
+      if (fetchedNotes.length > 0) {
+        setNotes(sanitizeNotes(fetchedNotes));
+      }
+
       // Also persist fetched data into Firebase Firestore
       const dataset: FullDataset = {
         products: fetchedProducts.length > 0 ? fetchedProducts : rawProducts,
@@ -998,6 +1093,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         fejSaru: fetchedFejSaru.length > 0 ? fetchedFejSaru : fejSaru,
         saruSpecs: fetchedSaruSpecs.length > 0 ? fetchedSaruSpecs : saruSpecs,
         orders: fetchedOrders.length > 0 ? fetchedOrders : orders,
+        notes: fetchedNotes.length > 0 ? fetchedNotes : notes,
       };
       uploadAllToFirestore(dataset)
         .then((res) => {
@@ -1039,6 +1135,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         fejSaru,
         saruSpecs,
         orders,
+        notes,
       };
       const res = await uploadAllToFirestore(dataset);
       setFirebaseStats(res.stats);
@@ -1072,6 +1169,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
       if (data.fejSaru.length > 0) setFejSaru(data.fejSaru);
       if (data.saruSpecs.length > 0) setSaruSpecs(data.saruSpecs);
       if (data.orders && data.orders.length > 0) setOrders(data.orders);
+      if (data.notes && data.notes.length > 0) setNotes(sanitizeNotes(data.notes));
 
       setIsFirebaseConnected(true);
       setFirebaseSyncTime(new Date().toLocaleTimeString('hu-HU'));
@@ -1101,6 +1199,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         fejSaru,
         saruSpecs,
         orders,
+        notes,
       },
     };
     return JSON.stringify(backup, null, 2);
@@ -1125,6 +1224,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         fejSaru: data.fejSaru || [],
         saruSpecs: data.saruSpecs || [],
         orders: data.orders || [],
+        notes: data.notes || [],
       };
       const res = await uploadAllToFirestore(dataset);
       await refreshFromFirebase();
@@ -1335,6 +1435,24 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const exportOrdersCsv = (): string => {
     return exportOrdersToCsv(orders);
+  };
+
+  const importNotesCsvText = (csvText: string): number => {
+    const imported = parseNotesCsv(csvText);
+    if (imported.length > 0) {
+      const map = new Map<string, ProductNote>();
+      notes.forEach((n) => map.set(n.id, n));
+      imported.forEach((n) => map.set(n.id, n));
+      const updated = Array.from(map.values());
+      setNotes(updated);
+      bulkSaveToFirestore(FIRESTORE_COLLECTIONS.NOTES, updated).catch(console.error);
+      return imported.length;
+    }
+    return 0;
+  };
+
+  const exportNotesCsv = (): string => {
+    return exportNotesToCsv(notes);
   };
 
   const getAllSaruSpecsForProduct = (productOrId: Product | string): SaruSpec[] => {
@@ -2246,6 +2364,66 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     await deleteItemFromFirestore(FIRESTORE_COLLECTIONS.ORDERS, id).catch(console.error);
   };
 
+  // Note CRUD & Helpers
+  const getNextNoteId = (): string => {
+    const nextNum = notes.length + 1;
+    return `NOTE-${1000 + nextNum}`;
+  };
+
+  const getNotesForProduct = useCallback(
+    (productId: string): ProductNote[] => {
+      if (!productId) return [];
+      const clean = productId.trim().toLowerCase();
+      const base = getBaseProductId(productId).trim().toLowerCase();
+      return notes.filter((n) => {
+        const noteProdId = (n.termekId || '').trim().toLowerCase();
+        const noteBase = getBaseProductId(n.termekId || '').trim().toLowerCase();
+        return (
+          noteProdId === clean ||
+          noteBase === clean ||
+          noteProdId === base ||
+          noteBase === base
+        );
+      });
+    },
+    [notes]
+  );
+
+  const addNote = async (note: Omit<ProductNote, 'id'> | ProductNote): Promise<ProductNote> => {
+    const finalId = ('id' in note && note.id) ? note.id : getNextNoteId();
+    const finalNote: ProductNote = {
+      ...note,
+      id: finalId,
+    };
+    setNotes((prev) => [finalNote, ...prev.filter((n) => n.id !== finalId)]);
+    await saveItemToFirestore(FIRESTORE_COLLECTIONS.NOTES, finalNote).catch(console.error);
+    return finalNote;
+  };
+
+  const updateNote = async (id: string, updatedFields: Partial<ProductNote>): Promise<void> => {
+    let updatedNote: ProductNote | null = null;
+    setNotes((prev) =>
+      prev.map((n) => {
+        if (n.id === id) {
+          updatedNote = { ...n, ...updatedFields };
+          return updatedNote;
+        }
+        return n;
+      })
+    );
+    if (updatedNote) {
+      await saveItemToFirestore(FIRESTORE_COLLECTIONS.NOTES, updatedNote).catch(console.error);
+    }
+  };
+
+  const deleteNote = async (id: string): Promise<void> => {
+    setNotes((prev) => prev.filter((n) => n.id !== id));
+    if (selectedNoteId === id) {
+      setSelectedNoteId(null);
+    }
+    await deleteItemFromFirestore(FIRESTORE_COLLECTIONS.NOTES, id).catch(console.error);
+  };
+
   const getAllRelatedProductIds = (productId: string): { id: string; relationType: string; product?: Product }[] => {
     const cleanId = (productId || '').trim();
     if (!cleanId) return [];
@@ -2941,6 +3119,16 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         orders,
         selectedOrderId,
         setSelectedOrderId,
+        notes,
+        selectedNoteId,
+        setSelectedNoteId,
+        getNotesForProduct,
+        getNextNoteId,
+        addNote,
+        updateNote,
+        deleteNote,
+        exportNotesCsv,
+        importNotesCsvText,
         getSaruSpecForProduct,
         getAllSaruSpecsForProduct,
         addOrder,

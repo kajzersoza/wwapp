@@ -87,15 +87,15 @@ export const Header: React.FC<HeaderProps> = ({
             className="flex items-center gap-2 sm:gap-2.5 text-left group cursor-pointer"
           >
             <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg bg-[#006067] flex items-center justify-center text-white font-black text-base sm:text-lg shadow-sm group-hover:bg-[#00474c] transition-colors flex-shrink-0">
-              K
+              W
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
                 <span className="font-extrabold text-stone-900 tracking-tight text-sm sm:text-base group-hover:text-[#006067] transition-colors">
-                  KINETIC
+                  World Wires
                 </span>
                 <span className="text-[9px] sm:text-[10px] font-bold tracking-widest px-1 sm:px-1.5 py-0.5 rounded bg-[#E0E9E8] text-[#006067] uppercase">
-                  Logistics
+                  Kft.
                 </span>
               </div>
               <p className="text-[10px] sm:text-[11px] text-stone-500 font-medium truncate hidden xs:block sm:block max-w-[170px]">

@@ -80,10 +80,25 @@ export type ActiveTab =
   | 'fejsaru'
   | 'saruspecs'
   | 'rendeles'
+  | 'notes'
   | 'detail'
   | 'scanner'
   | 'sync'
   | 'settings';
+
+export interface ProductNote {
+  id: string; // Note ID (egyedi kulcs, belső azonosító - nem jelenítendő meg)
+  termekId: string; // Termék ID (ez mutatja melyik termékhez tartozik)
+  nev: string; // Név
+  leiras?: string; // Leírás
+  image?: string; // Image (kép URL vagy fájlnév)
+  documents?: string; // Documents (dokumentumok)
+  date?: string; // Date (Dátum)
+  url?: string; // URL (link, kép vagy PDF link miniatűr előnézettel)
+  pageCount?: number; // PDF oldalszám (1 ha 1-oldalas, 4 ha 4-oldalas, stb.)
+  nevValasztas?: string; // Név választás (Felelős / Készítő választás)
+  customFields?: Record<string, string>;
+}
 
 export interface Order {
   id: string; // Belső egyedi azonosító vagy rendelesId

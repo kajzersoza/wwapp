@@ -24,6 +24,7 @@ import {
   FejSaruRelation,
   SaruSpec,
   Order,
+  ProductNote,
 } from '../types';
 
 // Initialize Firebase App
@@ -69,6 +70,7 @@ export const FIRESTORE_COLLECTIONS = {
   FEJSARU: 'fejsaru',
   SARUSPECS: 'saruspecs',
   ORDERS: 'rendelesek',
+  NOTES: 'notes',
   METADATA: 'metadata',
 } as const;
 
@@ -198,6 +200,7 @@ export interface FullDataset {
   fejSaru: FejSaruRelation[];
   saruSpecs: SaruSpec[];
   orders?: Order[];
+  notes?: ProductNote[];
 }
 
 /**
@@ -241,8 +244,13 @@ export async function uploadAllToFirestore(
     stats.saruSpecs = await bulkSaveToFirestore(FIRESTORE_COLLECTIONS.SARUSPECS, data.saruSpecs);
 
     if (data.orders && data.orders.length > 0) {
-      if (onProgress) onProgress('Rendelések mentése Firestore-ba...', 95);
+      if (onProgress) onProgress('Rendelések mentése Firestore-ba...', 94);
       stats.orders = await bulkSaveToFirestore(FIRESTORE_COLLECTIONS.ORDERS, data.orders);
+    }
+
+    if (data.notes && data.notes.length > 0) {
+      if (onProgress) onProgress('Notesz jegyzetek mentése Firestore-ba...', 97);
+      stats.notes = await bulkSaveToFirestore(FIRESTORE_COLLECTIONS.NOTES, data.notes);
     }
 
     // Save sync metadata
@@ -277,6 +285,7 @@ export async function downloadAllFromFirestore(): Promise<FullDataset> {
     fejSaru,
     saruSpecs,
     orders,
+    notes,
   ] = await Promise.all([
     getAllFromFirestore<Product>(FIRESTORE_COLLECTIONS.PRODUCTS),
     getAllFromFirestore<WarehousePosition>(FIRESTORE_COLLECTIONS.POSITIONS),
@@ -289,6 +298,7 @@ export async function downloadAllFromFirestore(): Promise<FullDataset> {
     getAllFromFirestore<FejSaruRelation>(FIRESTORE_COLLECTIONS.FEJSARU),
     getAllFromFirestore<SaruSpec>(FIRESTORE_COLLECTIONS.SARUSPECS),
     getAllFromFirestore<Order>(FIRESTORE_COLLECTIONS.ORDERS).catch(() => []),
+    getAllFromFirestore<ProductNote>(FIRESTORE_COLLECTIONS.NOTES).catch(() => []),
   ]);
 
   return {
@@ -303,5 +313,6 @@ export async function downloadAllFromFirestore(): Promise<FullDataset> {
     fejSaru,
     saruSpecs,
     orders,
+    notes,
   };
 }

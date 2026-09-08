@@ -1,12 +1,13 @@
 import React, { useState, useMemo } from 'react';
 import { useProducts } from '../context/ProductContext';
-import { Product, KanbanStatus, Order } from '../types';
+import { Product, KanbanStatus, Order, ProductNote } from '../types';
 import { TermekIdLink } from './TermekIdLink';
 import { PositionLink } from './PositionLink';
 import { FilterTag } from './FilterTag';
 import { BarcodeView } from './BarcodeView';
 import { SafeImage } from './SafeImage';
 import { SaruSpecMatrix } from './SaruSpecMatrix';
+import { UrlMediaPreview } from './UrlMediaPreview';
 import { resolveDriveImageUrl } from '../services/driveImageService';
 import {
   ArrowLeft,
@@ -53,6 +54,9 @@ import {
   PackageCheck,
   QrCode,
   Image as ImageIcon,
+  FileText,
+  UserCheck,
+  Paperclip,
 } from 'lucide-react';
 
 interface ProductDetailProps {
@@ -158,11 +162,37 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
     getRelatedProductOrders,
     addOrder,
     getNextOrderId,
+    getNotesForProduct,
+    addNote,
+    updateNote,
+    deleteNote,
+    getNextNoteId,
   } = useProducts();
 
   const [copied, setCopied] = useState(false);
   const [showImageModal, setShowImageModal] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+
+  // Note state for this product
+  const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
+  const [editingNote, setEditingNote] = useState<ProductNote | null>(null);
+  const [noteForm, setNoteForm] = useState<{
+    nev: string;
+    leiras: string;
+    image: string;
+    documents: string;
+    date: string;
+    url: string;
+    nevValasztas: string;
+  }>({
+    nev: '',
+    leiras: '',
+    image: '',
+    documents: '',
+    date: new Date().toISOString().split('T')[0],
+    url: '',
+    nevValasztas: '',
+  });
 
   // Kanban task creation state for this product
   const [isKanbanModalOpen, setIsKanbanModalOpen] = useState(false);
@@ -198,6 +228,9 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
     type: 'add',
     note: '',
   });
+
+  // Identification code view mode (QR kód vs Vonalkód) - defaults to QR code
+  const [codeViewMode, setCodeViewMode] = useState<'qr' | 'barcode'>('qr');
 
   if (!selectedProduct) {
     return (
@@ -579,6 +612,72 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
     }, 6000);
   };
 
+  const handleOpenNoteModal = (note?: ProductNote) => {
+    if (note) {
+      setEditingNote(note);
+      setNoteForm({
+        nev: note.nev || '',
+        leiras: note.leiras || '',
+        image: note.image || '',
+        documents: note.documents || '',
+        date: note.date || new Date().toISOString().split('T')[0],
+        url: note.url || '',
+        nevValasztas: note.nevValasztas || '',
+      });
+    } else {
+      setEditingNote(null);
+      setNoteForm({
+        nev: '',
+        leiras: '',
+        image: '',
+        documents: '',
+        date: new Date().toISOString().split('T')[0],
+        url: '',
+        nevValasztas: '',
+      });
+    }
+    setIsNoteModalOpen(true);
+  };
+
+  const handleSaveNote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!p) return;
+    try {
+      if (editingNote) {
+        await updateNote(editingNote.id, {
+          nev: noteForm.nev.trim(),
+          leiras: noteForm.leiras.trim(),
+          image: noteForm.image.trim(),
+          documents: noteForm.documents.trim(),
+          date: noteForm.date.trim(),
+          url: noteForm.url.trim(),
+          nevValasztas: noteForm.nevValasztas.trim(),
+        });
+      } else {
+        await addNote({
+          id: getNextNoteId(),
+          termekId: p.id,
+          nev: noteForm.nev.trim(),
+          leiras: noteForm.leiras.trim(),
+          image: noteForm.image.trim(),
+          documents: noteForm.documents.trim(),
+          date: noteForm.date.trim(),
+          url: noteForm.url.trim(),
+          nevValasztas: noteForm.nevValasztas.trim(),
+        });
+      }
+      setIsNoteModalOpen(false);
+    } catch (err) {
+      console.error('Error saving note:', err);
+    }
+  };
+
+  const handleDeleteNote = async (id: string) => {
+    if (window.confirm('Biztosan törölni szeretné ezt a jegyzetet?')) {
+      await deleteNote(id);
+    }
+  };
+
   const handleCopySpecs = () => {
     const lines = [
       `Termék ID: ${p.id}`,
@@ -801,6 +900,17 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
 
           <button
             type="button"
+            id="detail-add-note-btn"
+            onClick={() => handleOpenNoteModal()}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-semibold shadow-xs transition-colors cursor-pointer min-h-[40px]"
+            title="Új jegyzet vagy csatolmány rögzítése a termékhez"
+          >
+            <FileText className="w-3.5 h-3.5 text-amber-700" />
+            <span>+ Notesz</span>
+          </button>
+
+          <button
+            type="button"
             id="detail-edit-product-btn"
             onClick={() => onEdit(p)}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#006067] hover:bg-[#00474c] text-white text-xs font-medium shadow-xs transition-colors cursor-pointer min-h-[40px]"
@@ -921,232 +1031,6 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
         </div>
       )}
 
-      {/* Active Orders & Connected Orders Banner */}
-      {hasAnyOrder && (
-        <div className="bg-gradient-to-r from-sky-50/90 via-teal-50/80 to-emerald-50/70 border-2 border-sky-400/90 rounded-xl p-4 shadow-2xs space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-[#006067] text-white flex items-center justify-center shadow-xs flex-shrink-0">
-                <ShoppingCart className="w-4 h-4" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-xs font-bold text-stone-900">
-                    Rendelési Történet
-                  </h3>
-                  {sortedDirectOrders.length > 0 && (
-                    <span className="text-[11px] font-extrabold bg-[#E0E9E8] text-[#006067] border border-[#006067]/20 px-2 py-0.5 rounded-full">
-                      {sortedDirectOrders.length} db közvetlen tétel
-                    </span>
-                  )}
-                  {sortedRelatedOrders.length > 0 && (
-                    <span className="text-[11px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-full">
-                      Kapcsolódó: {sortedRelatedOrders.length} tétel
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              id="detail-open-rendeles-tab-btn"
-              onClick={() => setActiveTab('rendeles')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#006067] hover:bg-[#00474c] text-white text-xs font-bold transition-colors shadow-xs cursor-pointer"
-            >
-              <ShoppingCart className="w-3.5 h-3.5" />
-              <span>Megnyitás a Rendelés Munkalapon</span>
-            </button>
-          </div>
-
-          {/* Direct orders list sorted chronologically by date - genuine list layout */}
-          {sortedDirectOrders.length > 0 && (
-            <div className="space-y-2 pt-1">
-              <p className="text-[11px] font-bold text-stone-700 uppercase tracking-wider">
-                Cikkszám rendelési tételei (időrendi lista):
-              </p>
-              
-              <div className="bg-white/95 rounded-xl border border-stone-200 overflow-hidden shadow-3xs">
-                <div className="divide-y divide-stone-150">
-                  {sortedDirectOrders.map((ord, idx) => {
-                    const badge = getOrderStatusBadge(ord.statusz);
-                    const Icon = badge.icon;
-                    return (
-                      <div
-                        key={ord.id || `ord-${idx}`}
-                        className="p-3 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-stone-50/70 transition-colors"
-                      >
-                        {/* Bal oldal: Sorszám, Cikkszám, Státusz és alatta szépen a Terméknév */}
-                        <div className="flex-1 min-w-0 space-y-2">
-                          {/* 1. sor: Sorszám, Cikkszám és Státusz badge */}
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="w-6 h-6 rounded-full bg-stone-100 text-stone-700 font-mono text-xs font-bold flex items-center justify-center border border-stone-300 shrink-0">
-                              #{idx + 1}
-                            </span>
-                            <div className="inline-flex items-center gap-1.5 font-mono text-xs text-stone-700 shrink-0">
-                              <span className="text-stone-400 font-sans">Cikkszám:</span>
-                              <strong className="font-bold text-[#006067] text-sm bg-[#E0E9E8]/60 px-2 py-0.5 rounded border border-[#006067]/20">
-                                {ord.termekId}
-                              </strong>
-                            </div>
-                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-bold text-xs border ${badge.bg} shrink-0`}>
-                              <span className={`w-1.5 h-1.5 rounded-full ${badge.dot}`}></span>
-                              <Icon className="w-3.5 h-3.5 shrink-0" />
-                              <span>{badge.label}</span>
-                            </span>
-                          </div>
-
-                          {/* 2. sor: Terméknév szépen egymás alatt elrendezve */}
-                          {p?.name && (
-                            <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2 text-xs">
-                              <span className="text-stone-400 text-[10px] sm:text-[11px] uppercase font-bold tracking-wider shrink-0">
-                                Terméknév:
-                              </span>
-                              <span className="font-semibold text-stone-900 break-words text-xs sm:text-sm">
-                                {p.name}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Jobb oldal: 3 egyforma, soha meg nem törő dátum oszlop egymás mellett */}
-                        <div className="bg-stone-50/90 border border-stone-200 rounded-lg p-2 shrink-0 w-full md:w-auto md:min-w-[330px] shadow-3xs">
-                          <div className="grid grid-cols-3 divide-x divide-stone-200 text-center">
-                            <div className="px-1.5 sm:px-2 py-0.5 flex flex-col items-center justify-center">
-                              <span className="text-[9px] sm:text-[10px] uppercase font-bold text-stone-400 tracking-wider">
-                                Létrehozva
-                              </span>
-                              <span className="text-[11px] sm:text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
-                                {ord.datum || '—'}
-                              </span>
-                            </div>
-                            <div className="px-1.5 sm:px-2 py-0.5 flex flex-col items-center justify-center">
-                              <span className="text-[9px] sm:text-[10px] uppercase font-bold text-stone-400 tracking-wider">
-                                Megrendelve
-                              </span>
-                              <span className="text-[11px] sm:text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
-                                {ord.datumMegrendelve || '—'}
-                              </span>
-                            </div>
-                            <div className="px-1.5 sm:px-2 py-0.5 flex flex-col items-center justify-center">
-                              <span className="text-[9px] sm:text-[10px] uppercase font-bold text-stone-400 tracking-wider">
-                                Raktárban
-                              </span>
-                              <span className="text-[11px] sm:text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
-                                {ord.datumRaktarban || '—'}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Related orders list sorted chronologically by date - genuine list layout */}
-          {sortedRelatedOrders.length > 0 && (
-            <div className="space-y-2 pt-2 border-t border-stone-200/60">
-              <p className="text-[11px] font-bold text-amber-900 uppercase tracking-wider">
-                Ehhez a cikkhez kapcsolódó termékek megrendelései ({sortedRelatedOrders.length} db):
-              </p>
-              <div className="bg-white/95 rounded-xl border border-amber-200/90 overflow-hidden shadow-3xs">
-                <div className="divide-y divide-amber-100/80">
-                  {sortedRelatedOrders.map((ro, idx) => {
-                    const relBadge = getOrderStatusBadge(ro.order.statusz);
-                    const RelIcon = relBadge.icon;
-                    return (
-                      <div
-                        key={`rel-ord-${ro.order.id}-${idx}`}
-                        className="p-3 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-amber-50/40 transition-colors"
-                      >
-                        {/* Bal oldal: Sorszám, Kapcsolat típus, Cikkszám gomb, Státusz és alatta szépen a Terméknév */}
-                        <div className="flex-1 min-w-0 space-y-2">
-                          {/* 1. sor: Sorszám, Típus, Cikkszám és Státusz badge */}
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 font-mono text-xs font-bold flex items-center justify-center border border-amber-300 shrink-0">
-                              #{idx + 1}
-                            </span>
-                            
-                            {ro.relationType && (
-                              <span className="text-[10px] sm:text-[11px] font-bold px-2 py-0.5 rounded bg-amber-100/90 text-amber-900 border border-amber-300/80 shrink-0">
-                                {ro.relationType}
-                              </span>
-                            )}
-
-                            <div className="inline-flex items-center gap-1.5 font-mono text-xs text-stone-700 shrink-0">
-                              <span className="text-stone-400 font-sans">Cikkszám:</span>
-                              <button
-                                type="button"
-                                onClick={() => selectProductById(ro.relatedProductId)}
-                                className="font-bold text-[#006067] text-sm hover:underline cursor-pointer bg-stone-100 hover:bg-[#E0E9E8] px-2 py-0.5 rounded border border-stone-200 transition-colors"
-                                title={`Kattintson ide a(z) ${ro.relatedProductId} termék adatlapjának megnyitásához!`}
-                              >
-                                {ro.relatedProductId}
-                              </button>
-                            </div>
-
-                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-bold text-xs border ${relBadge.bg} shrink-0`}>
-                              <span className={`w-1.5 h-1.5 rounded-full ${relBadge.dot}`}></span>
-                              <RelIcon className="w-3.5 h-3.5 shrink-0" />
-                              <span>{relBadge.label}</span>
-                            </span>
-                          </div>
-
-                          {/* 2. sor: Terméknév szépen egymás alatt elrendezve */}
-                          {ro.relatedProduct?.name && (
-                            <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2 text-xs">
-                              <span className="text-stone-400 text-[10px] sm:text-[11px] uppercase font-bold tracking-wider shrink-0">
-                                Terméknév:
-                              </span>
-                              <span className="font-semibold text-stone-900 break-words text-xs sm:text-sm" title={ro.relatedProduct.name}>
-                                {ro.relatedProduct.name}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Jobb oldal: 3 egyforma, soha meg nem törő dátum oszlop egymás mellett */}
-                        <div className="bg-amber-50/50 border border-amber-200/70 rounded-lg p-2 shrink-0 w-full md:w-auto md:min-w-[330px] shadow-3xs">
-                          <div className="grid grid-cols-3 divide-x divide-amber-200/80 text-center">
-                            <div className="px-1.5 sm:px-2 py-0.5 flex flex-col items-center justify-center">
-                              <span className="text-[9px] sm:text-[10px] uppercase font-bold text-stone-400 tracking-wider">
-                                Létrehozva
-                              </span>
-                              <span className="text-[11px] sm:text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
-                                {ro.order.datum || '—'}
-                              </span>
-                            </div>
-                            <div className="px-1.5 sm:px-2 py-0.5 flex flex-col items-center justify-center">
-                              <span className="text-[9px] sm:text-[10px] uppercase font-bold text-stone-400 tracking-wider">
-                                Megrendelve
-                              </span>
-                              <span className="text-[11px] sm:text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
-                                {ro.order.datumMegrendelve || '—'}
-                              </span>
-                            </div>
-                            <div className="px-1.5 sm:px-2 py-0.5 flex flex-col items-center justify-center">
-                              <span className="text-[9px] sm:text-[10px] uppercase font-bold text-stone-400 tracking-wider">
-                                Raktárban
-                              </span>
-                              <span className="text-[11px] sm:text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
-                                {ro.order.datumRaktarban || '—'}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Main product showcase grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Image & Barcode Info */}
@@ -1208,16 +1092,45 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
             </div>
           </div>
 
-          {/* Barcode & Identification Card */}
+          {/* Barcode & Identification Card (QR Kód elsődlegesen) */}
           <div className="bg-white rounded-xl border-2 border-slate-300 p-5 shadow-2xs space-y-4">
             <div className="border-b border-slate-200 pb-3 flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                <QrCode className="w-3.5 h-3.5 text-slate-500" />
-                Azonosító Vonalkód
+                <QrCode className="w-3.5 h-3.5 text-[#006067]" />
+                {codeViewMode === 'qr' ? 'Azonosító QR Kód' : 'Azonosító Vonalkód'}
               </h3>
+              {/* Váltó QR kód és vonalkód között */}
+              <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-[10px] font-bold">
+                <button
+                  type="button"
+                  id="switch-to-qr-btn"
+                  onClick={() => setCodeViewMode('qr')}
+                  className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                    codeViewMode === 'qr'
+                      ? 'bg-white text-[#006067] shadow-xs font-black'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                  title="Termék ID megjelenítése QR kódként"
+                >
+                  QR Kód
+                </button>
+                <button
+                  type="button"
+                  id="switch-to-barcode-btn"
+                  onClick={() => setCodeViewMode('barcode')}
+                  className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                    codeViewMode === 'barcode'
+                      ? 'bg-white text-[#006067] shadow-xs font-black'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                  title="Termék ID megjelenítése vonalkódként"
+                >
+                  Vonalkód
+                </button>
+              </div>
             </div>
-            <div className="flex justify-center py-2 bg-stone-50 rounded-lg border border-stone-100">
-              <BarcodeView value={p.id} height={46} showText={true} />
+            <div className="flex justify-center py-3 bg-stone-50 rounded-lg border border-stone-100">
+              <BarcodeView value={p.id} mode={codeViewMode} qrSize={124} height={46} showText={true} />
             </div>
 
             <div className="pt-2 border-t border-stone-100 flex items-center justify-between text-xs">
@@ -1403,11 +1316,38 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                   </div>
                 )}
 
-                {/* Alkatrész Hely (hozzátartozó alkatrész raktári helye) */}
+                {/* Raktári Hely (A Raktári Pozíciók kártyán lévő valós készlethelyek) */}
+                <div className="bg-emerald-50/50 p-3 rounded-lg border border-emerald-200 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-emerald-900 text-xs">
+                    <Boxes className="w-4 h-4 text-[#006067] flex-shrink-0" />
+                    <div className="flex flex-col">
+                      <span className="font-bold text-stone-800">Raktári Hely:</span>
+                      <span className="text-[10px] text-emerald-700">(Raktári Pozíciók kártyáról)</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap justify-end max-w-[60%]">
+                    {stockPositions.length > 0 ? (
+                      stockPositions.map((sp) => (
+                        <div key={sp.positionId} className="inline-flex items-center gap-1">
+                          <PositionLink positionName={sp.positionName} variant="pill" />
+                          <span className="text-[10px] font-bold text-emerald-800 font-mono bg-white px-1.5 py-0.5 rounded border border-emerald-300">
+                            {sp.quantity} db
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <span className="text-xs text-stone-400 italic">
+                        Nincs pozícióhoz rendelve (0 db)
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Alkatrész Hely (törzsadaton rögzített alkatrész kód) */}
                 {hasVal(p.location) && (
                   <div className="bg-stone-50 p-3 rounded-lg border border-stone-200/80 flex items-center justify-between">
                     <div className="flex items-center gap-2 text-stone-500 text-xs">
-                      <MapPin className="w-4 h-4 text-[#006067]" />
+                      <MapPin className="w-4 h-4 text-[#006067] flex-shrink-0" />
                       <div className="flex flex-col">
                         <span className="font-medium text-stone-700">Alkatrész Hely:</span>
                         <span className="text-[10px] text-stone-400">(hozzátartozó alkatrész helye)</span>
@@ -1821,15 +1761,12 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                     <div>
                       <div className="flex items-center gap-2">
                         <h3 className="text-sm font-bold text-emerald-950">
-                          Termék – Mérődoboz Kapcsolatok (TermMerod)
+                          Termék – Mérődoboz Kapcsolatok
                         </h3>
                         <span className="text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-full">
                           {connectedTermMerod.length} kapcsolat
                         </span>
                       </div>
-                      <p className="text-[11px] text-stone-500">
-                        A TermMerod munkalapon hozzárendelt kompatibilis mérődobozok és eszközök
-                      </p>
                     </div>
                   </div>
                 </div>
@@ -2241,6 +2178,179 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
             );
           })()}
 
+          {/* Notesz (Note munkalap) Section */}
+          {(() => {
+            const productNotes = getNotesForProduct(p.id);
+
+            // "ha nincs notesz egy adott termékhez akkor a Notesz kártya se jelenjen meg mint eddig csak ha van"
+            if (!productNotes || productNotes.length === 0) {
+              return null;
+            }
+
+            return (
+              <div
+                id="product-detail-notes-card"
+                className="bg-white rounded-xl border-2 border-amber-400 p-5 shadow-2xs space-y-4"
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between border-b border-amber-100 pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-800">
+                      <FileText className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-bold text-amber-950">
+                          Notesz
+                        </h3>
+                        <span className="text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full">
+                          {productNotes.length} bejegyzés
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-stone-500">
+                        A termékhez csatolt jegyzetek, műszaki dokumentumok és előnézetek
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleOpenNoteModal()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Új bejegyzés</span>
+                  </button>
+                </div>
+
+                {/* Notes items list */}
+                <div className="space-y-4">
+                  {productNotes.map((note, idx) => (
+                    <div
+                      key={note.id || `note-${idx}`}
+                      className="p-4 bg-amber-50/20 hover:bg-amber-50/50 rounded-xl border border-amber-200 transition-all space-y-3"
+                    >
+                      {/* Top row: Note title, Date, Author (Név választás), Edit/Delete actions */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-150 pb-2.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-900 font-mono text-xs font-bold flex items-center justify-center border border-amber-200 shrink-0">
+                            #{idx + 1}
+                          </span>
+                          <h4 className="text-sm font-bold text-stone-900">
+                            {note.nev || 'Névtelen jegyzet'}
+                          </h4>
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-wrap text-xs">
+                          {note.date && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-stone-100 text-stone-700 border border-stone-200 font-mono text-[11px]">
+                              <Calendar className="w-3 h-3 text-stone-500" />
+                              <span>{note.date}</span>
+                            </span>
+                          )}
+                          {note.nevValasztas && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200 font-semibold text-[11px]">
+                              <UserCheck className="w-3 h-3 text-indigo-600" />
+                              <span>{note.nevValasztas}</span>
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleOpenNoteModal(note)}
+                            className="p-1 rounded text-stone-400 hover:text-stone-700 hover:bg-stone-100 transition-colors ml-1 cursor-pointer"
+                            title="Jegyzet szerkesztése"
+                          >
+                            <Edit className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteNote(note.id)}
+                            className="p-1 rounded text-stone-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                            title="Jegyzet törlése"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Leírás */}
+                      {note.leiras && (
+                        <div className="text-xs text-stone-700 whitespace-pre-wrap leading-relaxed">
+                          {note.leiras}
+                        </div>
+                      )}
+
+                      {/* URL (Előnézet képpel / többoldalas PDF miniatűrökkel) */}
+                      {(note.url || note.id) && (
+                        <div className="pt-1">
+                          <div className="text-[11px] font-bold text-stone-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                            <ExternalLink className="w-3 h-3 text-stone-400" />
+                            <span>Csatolt URL / Média előnézet:</span>
+                          </div>
+                          <UrlMediaPreview
+                            url={note.url}
+                            noteId={note.id}
+                            pageCount={note.pageCount}
+                            title={note.nev || 'Dokumentum'}
+                          />
+                        </div>
+                      )}
+
+                      {/* Additional Image if distinct from URL */}
+                      {note.image && note.image !== note.url && (
+                        <div className="pt-1">
+                          <div className="text-[11px] font-bold text-stone-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                            <ImageIcon className="w-3 h-3 text-stone-400" />
+                            <span>Csatolt Kép:</span>
+                          </div>
+                          <UrlMediaPreview
+                            url={note.image}
+                            title={note.nev ? `${note.nev} - Kép` : 'Kép'}
+                          />
+                        </div>
+                      )}
+
+                      {/* Documents reference if present */}
+                      {note.documents && (
+                        <div className="flex items-center flex-wrap gap-2 pt-1 text-xs">
+                          <Paperclip className="w-3.5 h-3.5 text-stone-400" />
+                          <span className="text-stone-400 font-medium">Dokumentum:</span>
+                          {note.documents.startsWith('http') || note.documents.includes('drive.google.com') ? (
+                            <a
+                              href={note.documents}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 font-mono bg-white px-2 py-0.5 rounded border border-stone-200 text-rose-700 hover:text-rose-900 hover:underline font-bold text-[11px]"
+                            >
+                              <span>{note.documents}</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          ) : (
+                            <span className="font-mono bg-white px-2 py-0.5 rounded border border-stone-200 text-stone-800 font-bold text-[11px]">
+                              {note.documents}
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      {/* If note.documents is a URL and note.url is empty, render media preview */}
+                      {!note.url && note.documents && (note.documents.startsWith('http') || note.documents.includes('drive.google.com')) && (
+                        <div className="pt-1">
+                          <UrlMediaPreview
+                            url={note.documents}
+                            noteId={note.id}
+                            pageCount={note.pageCount}
+                            title={note.nev || 'Dokumentum'}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
         </div>
 
       {/* Saru Segédtáblázat (Keresztmetszeti mátrix: 0.25..6.00 mm²) Section - Teljes szélességű kártya (Full Width) */}
@@ -2294,6 +2404,232 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
           </div>
         );
       })()}
+
+      {/* Rendelési Történet (Active Orders & Connected Orders Banner) - Alul, az utolsó helyen */}
+      {hasAnyOrder && (
+        <div className="bg-gradient-to-r from-sky-50/90 via-teal-50/80 to-emerald-50/70 border-2 border-sky-400/90 rounded-xl p-5 sm:p-6 shadow-2xs space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sky-200/60 pb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-[#006067] text-white flex items-center justify-center shadow-xs flex-shrink-0">
+                <ShoppingCart className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm sm:text-base font-bold text-stone-900">
+                    Rendelési Történet
+                  </h3>
+                  {sortedDirectOrders.length > 0 && (
+                    <span className="text-[11px] font-extrabold bg-[#E0E9E8] text-[#006067] border border-[#006067]/20 px-2.5 py-0.5 rounded-full">
+                      {sortedDirectOrders.length} db közvetlen tétel
+                    </span>
+                  )}
+                  {sortedRelatedOrders.length > 0 && (
+                    <span className="text-[11px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300 px-2.5 py-0.5 rounded-full">
+                      Kapcsolódó: {sortedRelatedOrders.length} tétel
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              id="detail-open-rendeles-tab-btn"
+              onClick={() => setActiveTab('rendeles')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#006067] hover:bg-[#00474c] text-white text-xs font-bold transition-colors shadow-xs cursor-pointer"
+            >
+              <ShoppingCart className="w-3.5 h-3.5" />
+              <span>Megnyitás a Rendelés Munkalapon</span>
+            </button>
+          </div>
+
+          {/* Direct orders list sorted chronologically by date - genuine list layout */}
+          {sortedDirectOrders.length > 0 && (
+            <div className="space-y-2 pt-1">
+              <p className="text-[11px] font-bold text-stone-700 uppercase tracking-wider">
+                Cikkszám rendelési tételei (időrendi lista):
+              </p>
+              
+              <div className="bg-white/95 rounded-xl border border-stone-200 overflow-hidden shadow-3xs">
+                <div className="divide-y divide-stone-150">
+                  {sortedDirectOrders.map((ord, idx) => {
+                    const badge = getOrderStatusBadge(ord.statusz);
+                    const Icon = badge.icon;
+                    return (
+                      <div
+                        key={ord.id || `ord-${idx}`}
+                        className="p-3 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-stone-50/70 transition-colors"
+                      >
+                        {/* Bal oldal: Sorszám, Cikkszám, Státusz és alatta szépen a Terméknév */}
+                        <div className="flex-1 min-w-0 space-y-2">
+                          {/* 1. sor: Sorszám, Cikkszám és Státusz badge */}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="w-6 h-6 rounded-full bg-stone-100 text-stone-700 font-mono text-xs font-bold flex items-center justify-center border border-stone-300 shrink-0">
+                              #{idx + 1}
+                            </span>
+                            <div className="inline-flex items-center gap-1.5 font-mono text-xs text-stone-700 shrink-0">
+                              <span className="text-stone-400 font-sans">Cikkszám:</span>
+                              <strong className="font-bold text-[#006067] text-sm bg-[#E0E9E8]/60 px-2 py-0.5 rounded border border-[#006067]/20">
+                                {ord.termekId}
+                              </strong>
+                            </div>
+                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-bold text-xs border ${badge.bg} shrink-0`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${badge.dot}`}></span>
+                              <Icon className="w-3.5 h-3.5 shrink-0" />
+                              <span>{badge.label}</span>
+                            </span>
+                          </div>
+
+                          {/* 2. sor: Terméknév szépen egymás alatt elrendezve */}
+                          {p?.name && (
+                            <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2 text-xs">
+                              <span className="text-stone-400 text-[10px] sm:text-[11px] uppercase font-bold tracking-wider shrink-0">
+                                Terméknév:
+                              </span>
+                              <span className="font-semibold text-stone-900 break-words text-xs sm:text-sm">
+                                {p.name}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Jobb oldal: 3 egyforma, soha meg nem törő dátum oszlop egymás mellett */}
+                        <div className="bg-stone-50/90 border border-stone-200 rounded-lg p-2 shrink-0 w-full md:w-auto md:min-w-[330px] shadow-3xs">
+                          <div className="grid grid-cols-3 divide-x divide-stone-200 text-center">
+                            <div className="px-1.5 sm:px-2 py-0.5 flex flex-col items-center justify-center">
+                              <span className="text-[9px] sm:text-[10px] uppercase font-bold text-stone-400 tracking-wider">
+                                Létrehozva
+                              </span>
+                              <span className="text-[11px] sm:text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
+                                {ord.datum || '—'}
+                              </span>
+                            </div>
+                            <div className="px-1.5 sm:px-2 py-0.5 flex flex-col items-center justify-center">
+                              <span className="text-[9px] sm:text-[10px] uppercase font-bold text-stone-400 tracking-wider">
+                                Megrendelve
+                              </span>
+                              <span className="text-[11px] sm:text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
+                                {ord.datumMegrendelve || '—'}
+                              </span>
+                            </div>
+                            <div className="px-1.5 sm:px-2 py-0.5 flex flex-col items-center justify-center">
+                              <span className="text-[9px] sm:text-[10px] uppercase font-bold text-stone-400 tracking-wider">
+                                Raktárban
+                              </span>
+                              <span className="text-[11px] sm:text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
+                                {ord.datumRaktarban || '—'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Related orders list sorted chronologically by date - genuine list layout */}
+          {sortedRelatedOrders.length > 0 && (
+            <div className="space-y-2 pt-2 border-t border-stone-200/60">
+              <p className="text-[11px] font-bold text-amber-900 uppercase tracking-wider">
+                Ehhez a cikkhez kapcsolódó termékek megrendelései ({sortedRelatedOrders.length} db):
+              </p>
+              <div className="bg-white/95 rounded-xl border border-amber-200/90 overflow-hidden shadow-3xs">
+                <div className="divide-y divide-amber-100/80">
+                  {sortedRelatedOrders.map((ro, idx) => {
+                    const relBadge = getOrderStatusBadge(ro.order.statusz);
+                    const RelIcon = relBadge.icon;
+                    return (
+                      <div
+                        key={`rel-ord-${ro.order.id}-${idx}`}
+                        className="p-3 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-amber-50/40 transition-colors"
+                      >
+                        {/* Bal oldal: Sorszám, Kapcsolat típus, Cikkszám gomb, Státusz és alatta szépen a Terméknév */}
+                        <div className="flex-1 min-w-0 space-y-2">
+                          {/* 1. sor: Sorszám, Típus, Cikkszám és Státusz badge */}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 font-mono text-xs font-bold flex items-center justify-center border border-amber-300 shrink-0">
+                              #{idx + 1}
+                            </span>
+                            
+                            {ro.relationType && (
+                              <span className="text-[10px] sm:text-[11px] font-bold px-2 py-0.5 rounded bg-amber-100/90 text-amber-900 border border-amber-300/80 shrink-0">
+                                {ro.relationType}
+                              </span>
+                            )}
+
+                            <div className="inline-flex items-center gap-1.5 font-mono text-xs text-stone-700 shrink-0">
+                              <span className="text-stone-400 font-sans">Cikkszám:</span>
+                              <button
+                                type="button"
+                                onClick={() => selectProductById(ro.relatedProductId)}
+                                className="font-bold text-[#006067] text-sm hover:underline cursor-pointer bg-stone-100 hover:bg-[#E0E9E8] px-2 py-0.5 rounded border border-stone-200 transition-colors"
+                                title={`Kattintson ide a(z) ${ro.relatedProductId} termék adatlapjának megnyitásához!`}
+                              >
+                                {ro.relatedProductId}
+                              </button>
+                            </div>
+
+                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-bold text-xs border ${relBadge.bg} shrink-0`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${relBadge.dot}`}></span>
+                              <RelIcon className="w-3.5 h-3.5 shrink-0" />
+                              <span>{relBadge.label}</span>
+                            </span>
+                          </div>
+
+                          {/* 2. sor: Terméknév szépen egymás alatt elrendezve */}
+                          {ro.relatedProduct?.name && (
+                            <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2 text-xs">
+                              <span className="text-stone-400 text-[10px] sm:text-[11px] uppercase font-bold tracking-wider shrink-0">
+                                Terméknév:
+                              </span>
+                              <span className="font-semibold text-stone-900 break-words text-xs sm:text-sm" title={ro.relatedProduct.name}>
+                                {ro.relatedProduct.name}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Jobb oldal: 3 egyforma, soha meg nem törő dátum oszlop egymás mellett */}
+                        <div className="bg-amber-50/50 border border-amber-200/70 rounded-lg p-2 shrink-0 w-full md:w-auto md:min-w-[330px] shadow-3xs">
+                          <div className="grid grid-cols-3 divide-x divide-amber-200/80 text-center">
+                            <div className="px-1.5 sm:px-2 py-0.5 flex flex-col items-center justify-center">
+                              <span className="text-[9px] sm:text-[10px] uppercase font-bold text-stone-400 tracking-wider">
+                                Létrehozva
+                              </span>
+                              <span className="text-[11px] sm:text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
+                                {ro.order.datum || '—'}
+                              </span>
+                            </div>
+                            <div className="px-1.5 sm:px-2 py-0.5 flex flex-col items-center justify-center">
+                              <span className="text-[9px] sm:text-[10px] uppercase font-bold text-stone-400 tracking-wider">
+                                Megrendelve
+                              </span>
+                              <span className="text-[11px] sm:text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
+                                {ro.order.datumMegrendelve || '—'}
+                              </span>
+                            </div>
+                            <div className="px-1.5 sm:px-2 py-0.5 flex flex-col items-center justify-center">
+                              <span className="text-[9px] sm:text-[10px] uppercase font-bold text-stone-400 tracking-wider">
+                                Raktárban
+                              </span>
+                              <span className="text-[11px] sm:text-xs font-mono font-bold text-stone-800 whitespace-nowrap mt-0.5">
+                                {ro.order.datumRaktarban || '—'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Product Stock Movement Modal */}
       {isStockModalOpen && (
@@ -2549,6 +2885,158 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                 >
                   <Plus className="w-4 h-4" />
                   <span>Kártya Létrehozása</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Note Creation / Editing Modal */}
+      {isNoteModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-stone-200 w-full max-w-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-4 border-b border-stone-200 flex items-center justify-between bg-stone-50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-800">
+                  <FileText className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-stone-900 text-sm">
+                    {editingNote ? 'Jegyzet Szerkesztése' : 'Új Jegyzet Hozzáadása'}
+                  </h3>
+                  <span className="text-xs font-mono text-stone-500">{p.id} — {p.name}</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsNoteModalOpen(false)}
+                className="p-1 text-stone-400 hover:text-stone-700 rounded-md cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveNote} className="p-5 space-y-3.5 text-xs">
+              {/* Név */}
+              <div>
+                <label className="block font-bold text-stone-800 mb-1">
+                  Jegyzet Neve (Név) <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={noteForm.nev}
+                  onChange={(e) => setNoteForm({ ...noteForm, nev: e.target.value })}
+                  placeholder="pl. Préselési beállítás, Műszaki észrevétel"
+                  className="w-full p-2.5 rounded-lg border border-stone-200 focus:outline-none focus:ring-2 focus:ring-[#006067]"
+                />
+              </div>
+
+              {/* Leírás */}
+              <div>
+                <label className="block font-bold text-stone-800 mb-1">
+                  Leírás
+                </label>
+                <textarea
+                  rows={3}
+                  value={noteForm.leiras}
+                  onChange={(e) => setNoteForm({ ...noteForm, leiras: e.target.value })}
+                  placeholder="Részletes leírás, megjegyzések, paraméterek..."
+                  className="w-full p-2.5 rounded-lg border border-stone-200 focus:outline-none focus:ring-2 focus:ring-[#006067] leading-relaxed"
+                />
+              </div>
+
+              {/* URL (Előnézethez: kép, PDF, weboldal) */}
+              <div>
+                <label className="block font-bold text-stone-800 mb-1">
+                  URL (Kép vagy többoldalas PDF link előnézettel)
+                </label>
+                <input
+                  type="url"
+                  value={noteForm.url}
+                  onChange={(e) => setNoteForm({ ...noteForm, url: e.target.value })}
+                  placeholder="https://drive.google.com/file/d/... vagy https://.../dokumentum.pdf"
+                  className="w-full p-2.5 rounded-lg border border-stone-200 focus:outline-none focus:ring-2 focus:ring-[#006067] font-mono text-[11px]"
+                />
+                <p className="text-[10px] text-stone-400 mt-0.5">
+                  Támogatja a Google Drive PDF linkeket, direkt PDF és kép fájlokat. Többoldalas PDF-eknél lapozható miniatűr jelenik meg!
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Image */}
+                <div>
+                  <label className="block font-bold text-stone-800 mb-1">
+                    Image (Kép URL / útvonal)
+                  </label>
+                  <input
+                    type="text"
+                    value={noteForm.image}
+                    onChange={(e) => setNoteForm({ ...noteForm, image: e.target.value })}
+                    placeholder="Kép URL vagy fájlnév"
+                    className="w-full p-2.5 rounded-lg border border-stone-200 focus:outline-none focus:ring-2 focus:ring-[#006067] text-[11px]"
+                  />
+                </div>
+
+                {/* Documents */}
+                <div>
+                  <label className="block font-bold text-stone-800 mb-1">
+                    Documents (Dokumentum azonosító)
+                  </label>
+                  <input
+                    type="text"
+                    value={noteForm.documents}
+                    onChange={(e) => setNoteForm({ ...noteForm, documents: e.target.value })}
+                    placeholder="pl. DOC-2024-01"
+                    className="w-full p-2.5 rounded-lg border border-stone-200 focus:outline-none focus:ring-2 focus:ring-[#006067] text-[11px]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Date */}
+                <div>
+                  <label className="block font-bold text-stone-800 mb-1">
+                    Dátum (Date)
+                  </label>
+                  <input
+                    type="date"
+                    value={noteForm.date}
+                    onChange={(e) => setNoteForm({ ...noteForm, date: e.target.value })}
+                    className="w-full p-2.5 rounded-lg border border-stone-200 focus:outline-none focus:ring-2 focus:ring-[#006067]"
+                  />
+                </div>
+
+                {/* Név választás */}
+                <div>
+                  <label className="block font-bold text-stone-800 mb-1">
+                    Név választás (Felelős / Szerző)
+                  </label>
+                  <input
+                    type="text"
+                    value={noteForm.nevValasztas}
+                    onChange={(e) => setNoteForm({ ...noteForm, nevValasztas: e.target.value })}
+                    placeholder="pl. Kovács János"
+                    className="w-full p-2.5 rounded-lg border border-stone-200 focus:outline-none focus:ring-2 focus:ring-[#006067]"
+                  />
+                </div>
+              </div>
+
+              {/* Action buttons */}
+              <div className="pt-3 border-t border-stone-200 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsNoteModalOpen(false)}
+                  className="px-4 py-2 rounded-lg border border-stone-200 text-stone-600 hover:bg-stone-50 font-semibold cursor-pointer"
+                >
+                  Mégse
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-lg bg-[#006067] hover:bg-[#004b50] text-white font-bold transition-all shadow-xs cursor-pointer"
+                >
+                  {editingNote ? 'Frissítés mentése' : 'Jegyzet mentése'}
                 </button>
               </div>
             </form>

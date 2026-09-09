@@ -11,6 +11,19 @@ export interface CategoryColorTheme {
   subtleClass: string;
 }
 
+/**
+ * 5 Gyakori Kategória
+ */
+export const COMMON_CATEGORIES = [
+  'Saruzófej',
+  'Saruzófej Alkatrész',
+  'Saru',
+  'Gyártandó Termék',
+  'Mérődoboz',
+] as const;
+
+export type CommonCategory = (typeof COMMON_CATEGORIES)[number];
+
 const PRESET_PALETTES: Record<string, CategoryColorTheme> = {
   // Saruzófej - Distinct Deep Teal / Jade
   'saruzófej': {
@@ -33,6 +46,49 @@ const PRESET_PALETTES: Record<string, CategoryColorTheme> = {
     badgeClass: 'bg-purple-50 text-purple-800 border-purple-200',
     pillClass: 'bg-purple-50 text-purple-800 border-purple-300 hover:bg-purple-100',
     subtleClass: 'text-purple-700 hover:text-purple-900',
+  },
+  // Saru - Warm Amber / Bronze Gold
+  'saru': {
+    bg: 'bg-amber-50',
+    text: 'text-amber-900',
+    border: 'border-amber-200',
+    dot: 'bg-amber-600',
+    activeBg: 'bg-amber-700 text-white border-amber-700',
+    badgeClass: 'bg-amber-50 text-amber-900 border-amber-200',
+    pillClass: 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100',
+    subtleClass: 'text-amber-700 hover:text-amber-900',
+  },
+  // Gyártandó Termék - Forest / Fresh Emerald
+  'gyártandó termék': {
+    bg: 'bg-emerald-50',
+    text: 'text-emerald-900',
+    border: 'border-emerald-200',
+    dot: 'bg-emerald-600',
+    activeBg: 'bg-emerald-700 text-white border-emerald-700',
+    badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+    pillClass: 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100',
+    subtleClass: 'text-emerald-700 hover:text-emerald-900',
+  },
+  'gyártandó': {
+    bg: 'bg-emerald-50',
+    text: 'text-emerald-900',
+    border: 'border-emerald-200',
+    dot: 'bg-emerald-600',
+    activeBg: 'bg-emerald-700 text-white border-emerald-700',
+    badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+    pillClass: 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100',
+    subtleClass: 'text-emerald-700 hover:text-emerald-900',
+  },
+  // Mérődoboz - Cyan / Azure Ocean
+  'mérődoboz': {
+    bg: 'bg-cyan-50',
+    text: 'text-cyan-900',
+    border: 'border-cyan-200',
+    dot: 'bg-cyan-600',
+    activeBg: 'bg-cyan-700 text-white border-cyan-700',
+    badgeClass: 'bg-cyan-50 text-cyan-900 border-cyan-200',
+    pillClass: 'bg-cyan-50 text-cyan-900 border-cyan-300 hover:bg-cyan-100',
+    subtleClass: 'text-cyan-700 hover:text-cyan-900',
   },
   // Alkatrész - Sapphire Blue
   'alkatrész': {
@@ -232,8 +288,11 @@ export function getCategoryColor(category?: string): CategoryColorTheme {
     return PRESET_PALETTES[clean];
   }
 
-  // Partial match
-  for (const [key, palette] of Object.entries(PRESET_PALETTES)) {
+  // Partial match - prioritize longer, more specific category names first
+  const sortedPresets = Object.entries(PRESET_PALETTES).sort(
+    (a, b) => b[0].length - a[0].length
+  );
+  for (const [key, palette] of sortedPresets) {
     if (clean.includes(key) || key.includes(clean)) {
       return palette;
     }

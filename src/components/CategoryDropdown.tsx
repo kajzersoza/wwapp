@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useProducts } from '../context/ProductContext';
 import { Layers, ChevronDown, Check } from 'lucide-react';
-import { getCategoryColor } from '../utils/categoryColors';
+import { getCategoryColor, COMMON_CATEGORIES } from '../utils/categoryColors';
 
 interface CategoryDropdownProps {
   variant?: 'header' | 'filter' | 'mobile' | 'compact';
@@ -130,6 +130,38 @@ export const CategoryDropdown: React.FC<CategoryDropdownProps> = ({
               )}
             </div>
 
+            {/* Gyakori Kategóriák Quick Chips */}
+            <div className="px-2.5 py-2 border-b border-stone-100 bg-stone-50/60">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-stone-400 mb-1.5">
+                Gyakori Kategóriák
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {COMMON_CATEGORIES.map((cat) => {
+                  const isSelected = selectedCategories.includes(cat);
+                  const palette = getCategoryColor(cat);
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => handleToggleCategory(cat)}
+                      className={`px-2 py-0.5 rounded-md text-[11px] font-medium transition-all flex items-center gap-1.5 cursor-pointer border select-none ${
+                        isSelected
+                          ? 'bg-[#006067] text-white border-[#006067] shadow-xs'
+                          : 'bg-white text-stone-700 border-stone-200 hover:border-stone-300 hover:bg-stone-50'
+                      }`}
+                    >
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          isSelected ? 'bg-white' : palette.dot
+                        }`}
+                      />
+                      <span className="truncate">{cat}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* List with checkboxes and distinct category colors */}
             <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5 max-h-[320px]">
               {categories.map((cat) => {
@@ -243,6 +275,38 @@ export const CategoryDropdown: React.FC<CategoryDropdownProps> = ({
                 Kijelölések törlése
               </button>
             )}
+          </div>
+
+          {/* Gyakori Kategóriák Quick Chips */}
+          <div className="px-2.5 py-2 border-b border-stone-100 bg-stone-50/60">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-stone-400 mb-1.5">
+              Gyakori Kategóriák
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {COMMON_CATEGORIES.map((cat) => {
+                const isSelected = selectedCategories.includes(cat);
+                const palette = getCategoryColor(cat);
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => handleToggleCategory(cat)}
+                    className={`px-2 py-0.5 rounded-md text-[11px] font-medium transition-all flex items-center gap-1.5 cursor-pointer border select-none ${
+                      isSelected
+                        ? 'bg-[#006067] text-white border-[#006067] shadow-xs'
+                        : 'bg-white text-stone-700 border-stone-200 hover:border-stone-300 hover:bg-stone-50'
+                    }`}
+                  >
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        isSelected ? 'bg-white' : palette.dot
+                      }`}
+                    />
+                    <span className="truncate">{cat}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* List items with checkboxes */}

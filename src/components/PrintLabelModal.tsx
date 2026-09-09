@@ -266,14 +266,14 @@ export const PrintLabelModal: React.FC<PrintLabelModalProps> = ({
     const drawLocationText = (
       x: number,
       y: number,
-      baseSize: number = 30,
-      maxWidth: number = 360
+      baseSize: number = 34,
+      maxWidth: number = 620
     ) => {
       let size = baseSize;
       const text = warehouseLocation;
-      if (text.length > 24) size = Math.max(16, baseSize - 12);
-      else if (text.length > 16) size = Math.max(20, baseSize - 8);
-      else if (text.length > 10) size = Math.max(24, baseSize - 4);
+      if (text.length > 24) size = Math.max(20, baseSize - 10);
+      else if (text.length > 16) size = Math.max(24, baseSize - 6);
+      else if (text.length > 10) size = Math.max(28, baseSize - 4);
 
       ctx.font = `bold ${size}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
       ctx.fillStyle = '#006067';
@@ -281,61 +281,69 @@ export const PrintLabelModal: React.FC<PrintLabelModalProps> = ({
     };
 
     if (labelType === 'qr') {
-      // Divider
+      // Divider moved slightly to the left (x=690 instead of 740) to give more room to the QR code
       ctx.beginPath();
-      ctx.moveTo(740, 84);
-      ctx.lineTo(740, 520);
-      ctx.lineWidth = 2;
+      ctx.moveTo(690, 84);
+      ctx.lineTo(690, 520);
+      ctx.lineWidth = 3;
       ctx.strokeStyle = '#cbd5e1';
       ctx.stroke();
 
-      // Product Name section
+      // 1. Termék megnevezés (larger font)
       ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
       ctx.fillStyle = '#64748b';
-      ctx.fillText('TERMÉK MEGNEVEZÉS:', 32, 116);
+      ctx.fillText('TERMÉK MEGNEVEZÉS:', 32, 114);
 
-      ctx.font = 'bold 38px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.font = 'bold 40px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
       ctx.fillStyle = '#0f172a';
-      drawWrappedText(ctx, product.name, 32, 158, 680, 46, 2);
+      const nameMetrics = ctx.measureText(product.name);
+      const isLongName = nameMetrics.width > 630;
+      drawWrappedText(ctx, product.name, 32, 154, 630, 44, 2);
 
-      // Product ID badge
+      // 2. Termék ID (underneath, larger font)
+      const idStartY = isLongName ? 236 : 218;
       ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
       ctx.fillStyle = '#64748b';
-      ctx.fillText('TERMÉK ID:', 32, 268);
+      ctx.fillText('TERMÉK ID:', 32, idStartY);
 
-      ctx.font = 'bold 33px "JetBrains Mono", monospace';
+      ctx.font = 'bold 38px "JetBrains Mono", monospace';
       const idW = ctx.measureText(product.id).width;
       ctx.fillStyle = '#f1f5f9';
       ctx.strokeStyle = '#64748b';
       ctx.lineWidth = 2;
-      drawRoundRect(ctx, 32, 280, idW + 30, 52, 8);
+      drawRoundRect(ctx, 32, idStartY + 10, idW + 30, 52, 8);
       ctx.fill();
       ctx.stroke();
 
       ctx.fillStyle = '#0f172a';
-      ctx.fillText(product.id, 47, 317);
+      ctx.fillText(product.id, 47, idStartY + 47);
 
-      // Spec attributes divider
+      // 3. Gyári kód (underneath, larger font)
+      const factoryStartY = idStartY + 88;
+      ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.fillStyle = '#64748b';
+      ctx.fillText('GYÁRI KÓD:', 32, factoryStartY);
+
+      ctx.font = 'bold 32px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#0f172a';
+      ctx.fillText(product.factoryCode || '-', 32, factoryStartY + 36);
+
+      // 4. Horizontal line divider
+      const lineY = factoryStartY + 56;
       ctx.beginPath();
-      ctx.moveTo(32, 355);
-      ctx.lineTo(715, 355);
-      ctx.strokeStyle = '#e2e8f0';
+      ctx.moveTo(32, lineY);
+      ctx.lineTo(660, lineY);
+      ctx.strokeStyle = '#cbd5e1';
       ctx.lineWidth = 2;
       ctx.stroke();
 
-      // Factory Code
-      ctx.font = '14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      // 5. Raktár hely (underneath the line, larger font)
+      const locStartY = lineY + 28;
+      ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
       ctx.fillStyle = '#64748b';
-      ctx.fillText('GYÁRI KÓD:', 32, 388);
-      ctx.font = 'bold 28px "JetBrains Mono", monospace';
-      ctx.fillStyle = '#0f172a';
-      ctx.fillText(product.factoryCode || '-', 32, 426);
+      ctx.fillText('RAKTÁR HELY:', 32, locStartY);
 
-      // Location
-      ctx.font = '14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-      ctx.fillStyle = '#64748b';
-      ctx.fillText('RAKTÁRI HELY:', 380, 388);
-      drawLocationText(380, 426, 30, 360);
+      drawLocationText(32, locStartY + 36, 34, 620);
 
       // Right Column: QR Code
       const qrEl = document.getElementById('export-qr-canvas-source') as HTMLCanvasElement;
@@ -343,98 +351,105 @@ export const PrintLabelModal: React.FC<PrintLabelModalProps> = ({
         ctx.fillStyle = '#ffffff';
         ctx.strokeStyle = '#cbd5e1';
         ctx.lineWidth = 2;
-        drawRoundRect(ctx, 770, 115, 240, 240, 10);
+        drawRoundRect(ctx, 735, 115, 260, 260, 10);
         ctx.fill();
         ctx.stroke();
 
-        ctx.drawImage(qrEl, 782, 127, 216, 216);
+        ctx.drawImage(qrEl, 747, 127, 236, 236);
 
+        // Larger font for data under QR code
         ctx.textAlign = 'center';
-        ctx.font = 'bold 26px "JetBrains Mono", monospace';
+        ctx.font = 'bold 30px "JetBrains Mono", monospace';
         ctx.fillStyle = '#0f172a';
-        ctx.fillText(product.id, 890, 395);
+        ctx.fillText(product.id, 865, 412);
 
-        ctx.font = '14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
         ctx.fillStyle = '#64748b';
-        ctx.fillText('AZONOSÍTÓ KÓD', 890, 425);
+        ctx.fillText('AZONOSÍTÓ KÓD', 865, 442);
         ctx.textAlign = 'left';
       }
     } else if (labelType === 'barcode') {
-      // Product Name & ID
+      // 1. Product Name (larger font)
       ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
       ctx.fillStyle = '#64748b';
-      ctx.fillText('TERMÉK MEGNEVEZÉS:', 32, 116);
+      ctx.fillText('TERMÉK MEGNEVEZÉS:', 32, 114);
 
-      ctx.font = 'bold 36px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.font = 'bold 40px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
       ctx.fillStyle = '#0f172a';
-      ctx.fillText(product.name, 32, 158);
+      ctx.fillText(product.name, 32, 154);
 
-      ctx.textAlign = 'right';
-      ctx.font = 'bold 32px "JetBrains Mono", monospace';
+      // 2. Product ID (underneath, larger font)
+      ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.fillStyle = '#64748b';
+      ctx.fillText('TERMÉK ID:', 32, 185);
+
+      ctx.font = 'bold 36px "JetBrains Mono", monospace';
       ctx.fillStyle = '#006067';
-      ctx.fillText(product.id, W - 32, 158);
-      ctx.textAlign = 'left';
+      ctx.fillText(product.id, 32, 222);
+
+      // 3. Gyári kód (underneath, larger font)
+      ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.fillStyle = '#64748b';
+      ctx.fillText('GYÁRI KÓD:', 500, 185);
+
+      ctx.font = 'bold 32px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#0f172a';
+      ctx.fillText(product.factoryCode || '-', 500, 222);
 
       // 1D Barcode in center
-      drawBarcodeOnCanvas(ctx, product.id, 80, 195, 890, 130, true);
+      drawBarcodeOnCanvas(ctx, product.id, 80, 245, 890, 120, true);
 
       // Attributes divider
       ctx.beginPath();
-      ctx.moveTo(32, 385);
-      ctx.lineTo(W - 32, 385);
+      ctx.moveTo(32, 420);
+      ctx.lineTo(W - 32, 420);
       ctx.strokeStyle = '#cbd5e1';
       ctx.lineWidth = 2;
       ctx.stroke();
 
-      ctx.font = '14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      // Raktár hely under the line
+      ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
       ctx.fillStyle = '#64748b';
-      ctx.fillText('GYÁRI KÓD:', 32, 420);
-      ctx.font = 'bold 28px "JetBrains Mono", monospace';
-      ctx.fillStyle = '#0f172a';
-      ctx.fillText(product.factoryCode || '-', 32, 458);
-
-      ctx.font = '14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-      ctx.fillStyle = '#64748b';
-      ctx.fillText('RAKTÁRI HELY:', 420, 420);
-      drawLocationText(420, 458, 30, 560);
+      ctx.fillText('RAKTÁR HELY:', 32, 455);
+      drawLocationText(32, 492, 34, 980);
     } else {
       // 'both' mode
       ctx.beginPath();
-      ctx.moveTo(760, 84);
-      ctx.lineTo(760, 520);
-      ctx.lineWidth = 2;
+      ctx.moveTo(710, 84);
+      ctx.lineTo(710, 520);
+      ctx.lineWidth = 3;
       ctx.strokeStyle = '#cbd5e1';
       ctx.stroke();
 
-      // Left: Name, ID, Barcode, Details
-      ctx.font = 'bold 34px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      // Left: 1. Name, 2. ID, 3. Gyári kód, 4. Barcode, 5. Vonal alatt Raktár hely
+      ctx.font = 'bold 36px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
       ctx.fillStyle = '#0f172a';
-      ctx.fillText(product.name, 32, 130);
+      ctx.fillText(product.name, 32, 126);
 
-      ctx.font = 'bold 28px "JetBrains Mono", monospace';
+      ctx.font = 'bold 30px "JetBrains Mono", monospace';
       ctx.fillStyle = '#006067';
-      ctx.fillText(product.id, 32, 170);
+      ctx.fillText(product.id, 32, 166);
 
-      drawBarcodeOnCanvas(ctx, product.id, 32, 190, 690, 75, false);
+      ctx.font = 'bold 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.fillStyle = '#64748b';
+      ctx.fillText('GYÁRI KÓD: ', 32, 202);
+      ctx.font = 'bold 28px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#0f172a';
+      ctx.fillText(product.factoryCode || '-', 160, 202);
+
+      drawBarcodeOnCanvas(ctx, product.id, 32, 220, 640, 70, false);
 
       ctx.beginPath();
-      ctx.moveTo(32, 310);
-      ctx.lineTo(725, 310);
+      ctx.moveTo(32, 340);
+      ctx.lineTo(670, 340);
       ctx.strokeStyle = '#e2e8f0';
       ctx.lineWidth = 2;
       ctx.stroke();
 
-      ctx.font = '14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.font = 'bold 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
       ctx.fillStyle = '#64748b';
-      ctx.fillText('GYÁRI KÓD: ', 32, 360);
-      ctx.font = 'bold 26px "JetBrains Mono", monospace';
-      ctx.fillStyle = '#0f172a';
-      ctx.fillText(product.factoryCode || '-', 160, 360);
-
-      ctx.font = '14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-      ctx.fillStyle = '#64748b';
-      ctx.fillText('RAKTÁRI HELY: ', 32, 420);
-      drawLocationText(180, 420, 28, 540);
+      ctx.fillText('RAKTÁR HELY: ', 32, 380);
+      drawLocationText(32, 420, 32, 640);
 
       // Right: QR Code
       const qrEl = document.getElementById('export-qr-canvas-source') as HTMLCanvasElement;
@@ -442,16 +457,16 @@ export const PrintLabelModal: React.FC<PrintLabelModalProps> = ({
         ctx.fillStyle = '#ffffff';
         ctx.strokeStyle = '#cbd5e1';
         ctx.lineWidth = 2;
-        drawRoundRect(ctx, 790, 130, 220, 220, 8);
+        drawRoundRect(ctx, 745, 125, 250, 250, 8);
         ctx.fill();
         ctx.stroke();
 
-        ctx.drawImage(qrEl, 800, 140, 200, 200);
+        ctx.drawImage(qrEl, 755, 135, 230, 230);
 
         ctx.textAlign = 'center';
-        ctx.font = 'bold 24px "JetBrains Mono", monospace';
+        ctx.font = 'bold 28px "JetBrains Mono", monospace';
         ctx.fillStyle = '#0f172a';
-        ctx.fillText(product.id, 900, 400);
+        ctx.fillText(product.id, 870, 415);
         ctx.textAlign = 'left';
       }
     }
@@ -701,41 +716,50 @@ export const PrintLabelModal: React.FC<PrintLabelModalProps> = ({
 
               {/* Middle Section */}
               {labelType === 'qr' && (
-                <div className="flex items-stretch justify-between gap-2 py-1 my-auto h-[135px]">
-                  {/* Left Column: Product Info */}
+                <div className="flex items-stretch justify-between gap-2 py-0.5 my-auto h-[138px]">
+                  {/* Left Column: Product Info in requested order: 1. Megnevezés, 2. Termék ID, 3. Gyári kód, 4. Vonal alatt Raktár hely */}
                   <div className="flex-1 min-w-0 flex flex-col justify-between pr-1">
+                    {/* 1. Termék megnevezés (nagyobb betűvel) */}
                     <div>
-                      <span className="text-[8.5px] text-stone-500 uppercase font-bold tracking-wider block">
+                      <span className="text-[8px] text-stone-500 uppercase font-bold tracking-wider block leading-none mb-0.5">
                         Termék Megnevezés:
                       </span>
                       <h4
-                        className="font-black text-stone-950 text-[14px] leading-snug line-clamp-2 mt-0.5"
+                        className="font-black text-stone-950 text-[15px] leading-tight line-clamp-2"
                         title={product.name}
                       >
                         {product.name}
                       </h4>
                     </div>
 
-                    <div className="my-0.5">
-                      <span className="text-[8px] text-stone-500 uppercase font-bold block">
+                    {/* 2. Termék ID (alatta, nagyobb betűvel) */}
+                    <div className="flex items-center gap-1.5 my-0.5">
+                      <span className="text-[8px] text-stone-500 uppercase font-bold leading-none flex-shrink-0">
                         Termék ID:
                       </span>
-                      <span className="font-mono font-black text-[13px] text-stone-950 bg-stone-100 px-2 py-0.5 rounded border border-stone-300 inline-block">
+                      <span className="font-mono font-black text-[14.5px] text-stone-950 bg-stone-100 px-2 py-0.5 rounded border border-stone-300 inline-block leading-none">
                         {product.id}
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-stone-700 pt-1 border-t border-stone-200">
-                      <div>
-                        <span className="text-stone-400 block text-[8px] uppercase">Gyári Kód:</span>
-                        <span className="font-mono font-black text-[11px] text-stone-950 truncate block">
-                          {product.factoryCode || '-'}
+                    {/* 3. Gyári kód (alatta, nagyobb betűvel) */}
+                    <div className="flex items-center gap-1.5 my-0.5">
+                      <span className="text-[8.5px] text-stone-500 uppercase font-bold leading-none flex-shrink-0">
+                        Gyári Kód:
+                      </span>
+                      <span className="font-mono font-black text-[13px] text-stone-950 truncate leading-none">
+                        {product.factoryCode || '-'}
+                      </span>
+                    </div>
+
+                    {/* 4. Vonal alatt: Raktár hely (nagyobb betűvel) */}
+                    <div className="border-t-2 border-stone-300 pt-1 mt-0.5">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="text-[8.5px] text-stone-500 uppercase font-bold leading-none flex-shrink-0">
+                          Raktár hely:
                         </span>
-                      </div>
-                      <div>
-                        <span className="text-stone-400 block text-[8px] uppercase">Raktári Hely:</span>
                         <span
-                          className="font-black text-[11px] text-[#006067] truncate block"
+                          className="font-black text-[13px] text-[#006067] truncate leading-none"
                           title={warehouseLocation}
                         >
                           {warehouseLocation}
@@ -744,19 +768,22 @@ export const PrintLabelModal: React.FC<PrintLabelModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Right Column: QR Code */}
-                  <div className="w-[88px] flex-shrink-0 flex flex-col items-center justify-center border-l border-stone-300 pl-2">
-                    <div className="bg-white p-1 rounded border border-stone-300 inline-flex items-center justify-center shadow-3xs">
+                  {/* Right Column: QR Code - függőleges vonal picit balrább (w-[104px]), alatta az adat nagyobb betűvel */}
+                  <div className="w-[104px] flex-shrink-0 flex flex-col items-center justify-center border-l-2 border-stone-300 pl-2">
+                    <div className="bg-white p-1 rounded-md border border-stone-300 inline-flex items-center justify-center shadow-3xs">
                       <QRCodeSVG
                         value={product.id}
-                        size={68}
+                        size={70}
                         bgColor="#ffffff"
                         fgColor="#111827"
                         level="M"
                         marginSize={1}
                       />
                     </div>
-                    <span className="font-mono text-[10px] font-black text-stone-900 mt-1 tracking-tight truncate max-w-[80px]">
+                    <span
+                      className="font-mono text-[12px] font-black text-stone-950 mt-1 tracking-tight truncate max-w-[98px] text-center block"
+                      title={product.id}
+                    >
                       {product.id}
                     </span>
                   </div>
@@ -764,41 +791,50 @@ export const PrintLabelModal: React.FC<PrintLabelModalProps> = ({
               )}
 
               {labelType === 'barcode' && (
-                <div className="flex flex-col justify-between py-1 my-auto h-[135px]">
+                <div className="flex flex-col justify-between py-0.5 my-auto h-[138px]">
+                  {/* 1. Termék megnevezés (nagyobb betűvel) */}
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      <span className="text-[8px] text-stone-500 uppercase font-bold block">
+                      <span className="text-[8px] text-stone-500 uppercase font-bold block leading-none mb-0.5">
                         Termék Megnevezés:
                       </span>
-                      <h4 className="font-black text-stone-950 text-[13.5px] leading-tight truncate">
+                      <h4 className="font-black text-stone-950 text-[15px] leading-tight truncate">
                         {product.name}
                       </h4>
                     </div>
-                    <span className="font-mono font-black text-[13px] text-stone-950 bg-stone-100 px-2 py-0.5 rounded border border-stone-300 flex-shrink-0">
+                    {/* 2. Termék ID (nagyobb betűvel) */}
+                    <span className="font-mono font-black text-[14px] text-stone-950 bg-stone-100 px-2 py-0.5 rounded border border-stone-300 flex-shrink-0 leading-none">
                       {product.id}
                     </span>
                   </div>
 
-                  <div className="py-1 flex items-center justify-center">
+                  {/* 3. Gyári kód (nagyobb betűvel) */}
+                  <div className="flex items-center gap-1.5 my-0.5">
+                    <span className="text-[8.5px] text-stone-500 uppercase font-bold leading-none">
+                      Gyári Kód:
+                    </span>
+                    <span className="font-mono font-black text-[13px] text-stone-950">
+                      {product.factoryCode || '-'}
+                    </span>
+                  </div>
+
+                  <div className="py-0.5 flex items-center justify-center">
                     <BarcodeView
                       value={product.id}
                       mode="barcode"
-                      height={32}
-                      showText={true}
+                      height={30}
+                      showText={false}
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-stone-700 pt-1 border-t border-stone-200">
-                    <div>
-                      <span className="text-stone-400 text-[8px] uppercase">Gyári Kód: </span>
-                      <span className="font-mono font-black text-[11px] text-stone-950">
-                        {product.factoryCode || '-'}
+                  {/* 4. Vonal alatt: Raktár hely */}
+                  <div className="border-t-2 border-stone-300 pt-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[8.5px] text-stone-500 uppercase font-bold leading-none">
+                        Raktár hely:
                       </span>
-                    </div>
-                    <div>
-                      <span className="text-stone-400 text-[8px] uppercase">Raktári Hely: </span>
                       <span
-                        className="font-black text-[11px] text-[#006067] truncate"
+                        className="font-black text-[13px] text-[#006067] truncate leading-none"
                         title={warehouseLocation}
                       >
                         {warehouseLocation}
@@ -809,55 +845,67 @@ export const PrintLabelModal: React.FC<PrintLabelModalProps> = ({
               )}
 
               {labelType === 'both' && (
-                <div className="flex items-stretch justify-between gap-2 py-1 my-auto h-[135px]">
-                  <div className="flex-1 min-w-0 flex flex-col justify-between">
+                <div className="flex items-stretch justify-between gap-2 py-0.5 my-auto h-[138px]">
+                  <div className="flex-1 min-w-0 flex flex-col justify-between pr-1">
+                    {/* 1. Termék megnevezés */}
                     <div>
-                      <h4 className="font-black text-stone-950 text-[12px] leading-tight truncate">
+                      <h4 className="font-black text-stone-950 text-[13.5px] leading-tight truncate">
                         {product.name}
                       </h4>
-                      <span className="font-mono font-black text-[11px] text-[#006067]">
+                    </div>
+
+                    {/* 2. Termék ID */}
+                    <div className="flex items-center gap-1">
+                      <span className="text-[8px] text-stone-500 font-bold uppercase">ID:</span>
+                      <span className="font-mono font-black text-[12.5px] text-[#006067]">
                         {product.id}
                       </span>
                     </div>
+
+                    {/* 3. Gyári kód */}
+                    <div className="flex items-center gap-1">
+                      <span className="text-[8px] text-stone-500 font-bold uppercase">Gyári:</span>
+                      <span className="font-mono font-black text-[11.5px] text-stone-950 truncate">
+                        {product.factoryCode || '-'}
+                      </span>
+                    </div>
+
                     <div className="py-0.5">
                       <BarcodeView
                         value={product.id}
                         mode="barcode"
-                        height={20}
+                        height={18}
                         showText={false}
                       />
                     </div>
-                    <div className="grid grid-cols-2 gap-1 text-stone-700 pt-0.5 border-t border-stone-200">
-                      <div>
-                        <span className="text-stone-400 uppercase text-[8px]">Hely: </span>
+
+                    {/* 4. Vonal alatt: Raktár hely */}
+                    <div className="border-t-2 border-stone-300 pt-0.5">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[8px] text-stone-500 uppercase font-bold">Raktár:</span>
                         <span
-                          className="font-black text-[10px] text-[#006067] truncate"
+                          className="font-black text-[12px] text-[#006067] truncate"
                           title={warehouseLocation}
                         >
                           {warehouseLocation}
                         </span>
                       </div>
-                      <div>
-                        <span className="text-stone-400 uppercase text-[8px]">Gyári: </span>
-                        <span className="font-mono font-black text-[10px] text-stone-950 truncate">
-                          {product.factoryCode || '-'}
-                        </span>
-                      </div>
                     </div>
                   </div>
 
-                  <div className="w-[78px] flex-shrink-0 flex flex-col items-center justify-center border-l border-stone-300 pl-1.5">
+                  {/* Right Column: QR Code - függőleges vonal balrább (w-[98px]), adat nagyobb betűvel */}
+                  <div className="w-[98px] flex-shrink-0 flex flex-col items-center justify-center border-l-2 border-stone-300 pl-1.5">
                     <div className="bg-white p-1 rounded border border-stone-300 inline-flex items-center justify-center">
                       <QRCodeSVG
                         value={product.id}
-                        size={56}
+                        size={62}
                         bgColor="#ffffff"
                         fgColor="#111827"
                         level="M"
                         marginSize={1}
                       />
                     </div>
-                    <span className="font-mono text-[9px] font-black text-stone-900 mt-0.5">
+                    <span className="font-mono text-[11.5px] font-black text-stone-900 mt-1 truncate max-w-[92px] text-center block">
                       {product.id}
                     </span>
                   </div>

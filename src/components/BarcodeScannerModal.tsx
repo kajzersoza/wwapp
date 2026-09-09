@@ -4,7 +4,6 @@ import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import {
   QrCode,
   Barcode,
-  Search,
   Camera,
   X,
   CheckCircle2,
@@ -36,7 +35,6 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   onClose,
 }) => {
   const { products, selectProductById } = useProducts();
-  const [scanInput, setScanInput] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle');
   const [scannedProduct, setScannedProduct] = useState<Product | null>(null);
@@ -45,7 +43,6 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const [torchOn, setTorchOn] = useState(false);
   const [hasTorch, setHasTorch] = useState(false);
 
-  const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const isHandlingScanRef = useRef<boolean>(false);
@@ -213,48 +210,85 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         scannerRef.current = scanner;
 
         // Query available cameras
+        let availableDevices: any[] = [];
         try {
           const devices = await Html5Qrcode.getCameras();
           if (isMountedRef.current && devices && devices.length > 0) {
+            availableDevices = devices;
             setCameras(devices);
           }
         } catch (camErr) {
           console.warn('Could not enumerate cameras:', camErr);
         }
 
-        // Camera configuration: on mobile prioritize back/environment camera
-        const cameraConfig = cameraId
-          ? { deviceId: { exact: cameraId } }
-          : { facingMode: 'environment' };
+        // Camera configuration:
+        // 1. If explicit cameraId given, use it
+        // 2. Else if devices enumerated, pick back/rear camera if available, otherwise first device
+        // 3. Else fallback to ideal environment facingMode
+        let cameraConfig: any;
+        if (cameraId) {
+          cameraConfig = { deviceId: { exact: cameraId } };
+        } else if (availableDevices.length > 0) {
+          const backCam = availableDevices.find((d) =>
+            /back|rear|environment|hátlap/i.test(d.label || '')
+          );
+          cameraConfig = { deviceId: { exact: backCam ? backCam.id : availableDevices[0].id } };
+        } else {
+          cameraConfig = { facingMode: { ideal: 'environment' } };
+        }
 
         const qrboxFunction = (
           viewfinderWidth: number,
           viewfinderHeight: number
         ) => {
           const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-          const boxSize = Math.max(180, Math.floor(minEdge * 0.75));
+          // Square viewfinder box - ideal for both QR codes and 1D barcodes
+          const boxSize = Math.max(180, Math.min(260, Math.floor(minEdge * 0.72)));
           return {
             width: boxSize,
-            height: Math.floor(boxSize * 0.75),
+            height: boxSize,
           };
         };
 
-        await scanner.start(
-          cameraConfig,
-          {
-            fps: 15,
-            qrbox: qrboxFunction,
-            aspectRatio: 1.333,
-          },
-          (decodedText) => {
-            if (isMountedRef.current) {
-              handleScanSuccess(decodedText);
-            }
-          },
-          () => {
-            // Frame error (no code found in frame), safe to ignore
+        const onScan = (decodedText: string) => {
+          if (isMountedRef.current) {
+            handleScanSuccess(decodedText);
           }
-        );
+        };
+
+        try {
+          await scanner.start(
+            cameraConfig,
+            {
+              fps: 15,
+              qrbox: qrboxFunction,
+            },
+            onScan,
+            () => {
+              // Frame error (no code found in frame), safe to ignore
+            }
+          );
+        } catch (firstErr: any) {
+          const firstErrStr = String(firstErr?.message || firstErr);
+          // If environment/specified camera failed with NotFoundError, attempt user/front facing camera fallback
+          if (
+            firstErrStr.includes('NotFoundError') ||
+            firstErrStr.includes('OverconstrainedError') ||
+            firstErrStr.includes('Requested device not found')
+          ) {
+            await scanner.start(
+              { facingMode: 'user' },
+              {
+                fps: 15,
+                qrbox: qrboxFunction,
+              },
+              onScan,
+              () => {}
+            );
+          } else {
+            throw firstErr;
+          }
+        }
 
         if (isMountedRef.current) {
           setCameraStatus('scanning');
@@ -271,25 +305,28 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         }
       } catch (err: any) {
         if (!isMountedRef.current) return;
-        console.error('Camera start error:', err);
         const errStr = String(err?.message || err);
 
         if (
+          errStr.includes('NotFoundError') ||
+          errStr.includes('DevicesNotFoundError') ||
+          errStr.includes('Requested device not found')
+        ) {
+          console.warn('Nem található használható kamera az eszközön:', errStr);
+          setCameraStatus('no_camera');
+          setErrorMsg('Nem található csatlakoztatott kamera az eszközön.');
+        } else if (
           errStr.includes('NotAllowedError') ||
           errStr.includes('Permission') ||
           errStr.includes('denied')
         ) {
+          console.warn('Kamera hozzáférés megtagadva:', errStr);
           setCameraStatus('permission_denied');
           setErrorMsg(
             'A böngésző nem kapott engedélyt a kamera eléréséhez. Kérjük engedélyezze a kamerát a böngészősávban.'
           );
-        } else if (
-          errStr.includes('NotFoundError') ||
-          errStr.includes('DevicesNotFoundError')
-        ) {
-          setCameraStatus('no_camera');
-          setErrorMsg('Nem található csatlakoztatott kamera az eszközön.');
         } else {
+          console.warn('Kamerahiba részlet:', errStr);
           setCameraStatus('error');
           setErrorMsg(`Kamerahiba: ${errStr}`);
         }
@@ -348,15 +385,9 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       isHandlingScanRef.current = false;
       setScannedProduct(null);
       setErrorMsg(null);
-      setScanInput('');
 
       // Auto-start camera when modal opens
       startCamera();
-
-      // Focus input as fallback
-      setTimeout(() => {
-        inputRef.current?.focus();
-      }, 300);
     } else {
       isMountedRef.current = false;
       stopCamera();
@@ -370,23 +401,10 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleManualLookup = () => {
-    processCode(scanInput);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleManualLookup();
-    }
-  };
-
   const handleClose = async () => {
     await stopCamera();
     onClose();
   };
-
-  const quickSamples = products.slice(0, 4);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-150">
@@ -419,30 +437,32 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
         {/* Scanner Viewport Section */}
         <div className="p-4 sm:p-5 space-y-3.5 overflow-y-auto">
-          <div className="relative min-h-[220px] max-h-[300px] sm:min-h-[250px] bg-stone-950 rounded-xl overflow-hidden flex flex-col items-center justify-center border-2 border-stone-800 shadow-inner">
+          <div className="relative w-full aspect-square max-w-[360px] sm:max-w-[380px] mx-auto bg-stone-950 rounded-2xl overflow-hidden flex flex-col items-center justify-center border-2 border-stone-800 shadow-inner">
             {/* HTML5 QR Code video target */}
             <div
               id="html5-qr-reader"
-              className="w-full h-full min-h-[220px] flex items-center justify-center"
+              className="w-full h-full min-h-[260px] flex items-center justify-center"
             />
 
             {/* Scanning Overlay (Target Reticles & Animated Laser) */}
             {cameraStatus === 'scanning' && (
-              <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                {/* Laser scan animation */}
-                <div className="absolute left-4 right-4 h-[2.5px] bg-red-500 shadow-[0_0_14px_rgba(239,68,68,1)] animate-scan-line z-20" />
+              <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
+                {/* Target square reticle (Optimized for QR codes & 1D barcodes) */}
+                <div className="relative w-56 h-56 sm:w-64 sm:h-64 border-2 border-white/35 rounded-2xl z-10 overflow-hidden shadow-2xl">
+                  {/* Corner accents */}
+                  <div className="absolute top-0 left-0 w-6 h-6 border-t-3 border-l-3 border-[#00d2df] rounded-tl-xl pointer-events-none" />
+                  <div className="absolute top-0 right-0 w-6 h-6 border-t-3 border-r-3 border-[#00d2df] rounded-tr-xl pointer-events-none" />
+                  <div className="absolute bottom-0 left-0 w-6 h-6 border-b-3 border-l-3 border-[#00d2df] rounded-bl-xl pointer-events-none" />
+                  <div className="absolute bottom-0 right-0 w-6 h-6 border-b-3 border-r-3 border-[#00d2df] rounded-br-xl pointer-events-none" />
 
-                {/* Target box reticle */}
-                <div className="relative w-56 h-44 sm:w-64 sm:h-48 border border-white/25 rounded-lg z-10">
-                  <div className="absolute -top-1 -left-1 w-6 h-6 border-t-3 border-l-3 border-[#00d2df] rounded-tl" />
-                  <div className="absolute -top-1 -right-1 w-6 h-6 border-t-3 border-r-3 border-[#00d2df] rounded-tr" />
-                  <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-3 border-l-3 border-[#00d2df] rounded-bl" />
-                  <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-3 border-r-3 border-[#00d2df] rounded-br" />
+                  {/* Laser scan animation inside the square */}
+                  <div className="absolute inset-x-2 h-[2.5px] bg-red-500 shadow-[0_0_12px_rgba(239,68,68,1)] animate-scan-line pointer-events-none" />
                 </div>
 
                 {/* Subtitle instructions on camera feed */}
-                <div className="absolute bottom-2.5 px-3 py-1 rounded-full bg-black/65 backdrop-blur-xs text-[11px] text-stone-200 font-medium tracking-wide z-20">
-                  Irányítsa a kamerát a vonalkódra vagy QR kódra
+                <div className="mt-3 px-3.5 py-1.5 rounded-full bg-black/70 backdrop-blur-xs text-[11px] text-stone-200 font-medium tracking-wide z-20 flex items-center gap-1.5 border border-white/10 shadow-sm">
+                  <QrCode className="w-3.5 h-3.5 text-[#00d2df]" />
+                  <span>Irányítsa a kamerát a QR kódra vagy vonalkódra</span>
                 </div>
               </div>
             )}
@@ -515,7 +535,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 <Camera className="w-8 h-8 text-stone-500 mx-auto" />
                 <p className="text-xs font-bold text-white">Kamera nem elérhető</p>
                 <p className="text-[11px] text-stone-400 max-w-xs">
-                  Használja az alábbi manuális kódkeresőt, vagy töltsön fel egy vonalkódos képet.
+                  Ellenőrizze a kamera engedélyét vagy töltsön fel egy képet a galériából.
                 </p>
                 <button
                   type="button"
@@ -553,8 +573,16 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
             )}
           </div>
 
-          {/* Quick options bar: Photo upload / File scan */}
-          <div className="flex items-center justify-between gap-2 text-xs">
+          {/* Error Message banner */}
+          {errorMsg && (
+            <div className="p-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span className="leading-snug">{errorMsg}</span>
+            </div>
+          )}
+
+          {/* Clean toolbar: File / photo upload fallback and camera control */}
+          <div className="pt-2 border-t border-stone-200 flex flex-col sm:flex-row items-center justify-between gap-2.5">
             <input
               ref={fileInputRef}
               type="file"
@@ -567,85 +595,17 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#006067] hover:text-[#00474c] hover:bg-[#E0E9E8]/60 px-2.5 py-1 rounded-md transition-colors cursor-pointer"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-xs font-semibold text-[#006067] bg-[#E0E9E8]/70 hover:bg-[#E0E9E8] px-3.5 py-2 rounded-xl border border-[#006067]/20 transition-all cursor-pointer shadow-3xs"
             >
-              <Upload className="w-3.5 h-3.5" />
-              <span>Fotózás vagy képfeltöltés</span>
+              <Upload className="w-4 h-4 text-[#006067]" />
+              <span>Fotó készítése vagy kép feltöltése</span>
             </button>
 
-            {cameraStatus !== 'scanning' && (
-              <button
-                type="button"
-                onClick={() => startCamera()}
-                className="inline-flex items-center gap-1 text-[11px] font-semibold text-stone-600 hover:text-stone-900 px-2 py-1 rounded-md transition-colors cursor-pointer"
-              >
-                <Camera className="w-3.5 h-3.5 text-[#006067]" />
-                <span>Kamera indítása</span>
-              </button>
-            )}
-          </div>
-
-          {/* Error Message banner */}
-          {errorMsg && (
-            <div className="p-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              <span className="leading-snug">{errorMsg}</span>
-            </div>
-          )}
-
-          {/* Scanner Input field */}
-          <div className="space-y-1.5 pt-2 border-t border-stone-200">
-            <label className="block text-xs font-bold text-stone-700">
-              Beolvasott kód / Manuális Termék ID:
-            </label>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <input
-                  ref={inputRef}
-                  id="scanner-manual-input"
-                  type="text"
-                  value={scanInput}
-                  onChange={(e) => {
-                    setScanInput(e.target.value);
-                    setErrorMsg(null);
-                  }}
-                  onKeyDown={handleKeyDown}
-                  placeholder="pl. 40107.00.33 vagy MLS0185-J"
-                  className="w-full bg-[#F4F7F6] border border-stone-300 rounded-lg px-3 py-2 text-xs font-mono font-bold text-stone-900 focus:bg-white focus:border-[#006067] outline-none"
-                />
-              </div>
-              <button
-                type="button"
-                id="scanner-lookup-btn"
-                onClick={handleManualLookup}
-                className="px-4 py-2 bg-[#006067] hover:bg-[#00474c] text-white font-semibold text-xs rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
-              >
-                <Search className="w-3.5 h-3.5" />
-                <span>Keresés</span>
-              </button>
+            <div className="flex items-center gap-2 text-[11px] text-stone-500">
+              <Barcode className="w-3.5 h-3.5 text-stone-400" />
+              <span>QR kód és vonalkód automata beolvasás</span>
             </div>
           </div>
-
-          {/* Quick sample chips */}
-          {quickSamples.length > 0 && (
-            <div className="pt-2 border-t border-stone-100">
-              <p className="text-[10px] font-bold uppercase text-stone-400 mb-1.5">
-                Gyors tesztelés (minták a táblázatból):
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {quickSamples.map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => processCode(s.id)}
-                    className="font-mono text-[11px] px-2 py-1 rounded bg-stone-100 hover:bg-[#E0E9E8] text-stone-700 hover:text-[#006067] transition-colors cursor-pointer border border-stone-200/60"
-                  >
-                    {s.id}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>

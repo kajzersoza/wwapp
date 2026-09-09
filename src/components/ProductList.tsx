@@ -3,7 +3,7 @@ import { useProducts } from '../context/ProductContext';
 import { TermekIdLink } from './TermekIdLink';
 import { FilterTag } from './FilterTag';
 import { MultiSelectDropdown } from './MultiSelectDropdown';
-import { getCategoryColor } from '../utils/categoryColors';
+import { getCategoryColor, COMMON_CATEGORIES } from '../utils/categoryColors';
 import {
   Filter,
   LayoutGrid,
@@ -333,6 +333,49 @@ export const ProductList: React.FC<ProductListProps> = ({
               <span>Új</span>
             </button>
           </div>
+        </div>
+
+        {/* Gyakori Kategóriák Quick Filter Row */}
+        <div className="pt-2 border-t border-stone-100 flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none text-xs">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400 flex-shrink-0 mr-1">
+            Gyakori Kategóriák:
+          </span>
+          {COMMON_CATEGORIES.map((cat) => {
+            const isSelected = activeCategories.includes(cat);
+            const count = categoryCounts[cat] || 0;
+            const palette = getCategoryColor(cat);
+            return (
+              <button
+                key={cat}
+                type="button"
+                id={`quick-cat-btn-${cat.replace(/[^a-zA-Z0-9]/g, '_')}`}
+                onClick={() => toggleFilterItem('categories', cat)}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all cursor-pointer flex-shrink-0 border select-none ${
+                  isSelected
+                    ? 'bg-[#006067] text-white border-[#006067] shadow-xs'
+                    : 'bg-white text-stone-700 border-stone-200 hover:border-stone-300 hover:bg-stone-50'
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    isSelected ? 'bg-white' : palette.dot
+                  }`}
+                />
+                <span>{cat}</span>
+                {count > 0 && (
+                  <span
+                    className={`text-[10px] font-mono px-1 rounded-full ${
+                      isSelected
+                        ? 'bg-white/20 text-white font-bold'
+                        : 'bg-stone-100 text-stone-500'
+                    }`}
+                  >
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
         {/* Multi-Select Dropdown Filters Grid with Checkboxes */}

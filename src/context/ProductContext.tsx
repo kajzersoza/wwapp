@@ -94,6 +94,9 @@ import {
   uploadAllToFirestore,
   downloadAllFromFirestore,
   clearFirestoreCollection,
+  isFirestoreQuotaExhausted,
+  setFirestoreQuotaExhausted,
+  isQuotaError,
 } from '../services/firebaseService';
 
 export interface PositionProductItem {
@@ -849,41 +852,44 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
             const isOldMock = cloudData.orders.some((o) => o.id?.startsWith('REND-2024-00')) || cloudData.orders.length <= 6;
             if (isOldMock && INITIAL_ORDERS.length >= 20) {
               setOrders(INITIAL_ORDERS);
-              bulkSaveToFirestore(FIRESTORE_COLLECTIONS.ORDERS, INITIAL_ORDERS).catch(console.error);
             } else {
               setOrders(cloudData.orders);
             }
-          } else {
+          } else if (orders.length === 0) {
             setOrders(INITIAL_ORDERS);
-            bulkSaveToFirestore(FIRESTORE_COLLECTIONS.ORDERS, INITIAL_ORDERS).catch(console.error);
           }
           if (cloudData.notes && cloudData.notes.length > 0) {
             setNotes(sanitizeNotes(cloudData.notes));
-          } else {
+          } else if (notes.length === 0) {
             setNotes(sanitizeNotes(INITIAL_NOTES));
-            bulkSaveToFirestore(FIRESTORE_COLLECTIONS.NOTES, sanitizeNotes(INITIAL_NOTES)).catch(console.error);
           }
 
           setIsFirebaseConnected(true);
           setFirebaseSyncTime(new Date().toLocaleTimeString('hu-HU'));
         } else {
-          // If Firestore is completely empty on first launch, upload current initial/cached dataset
-          const initialDataset: FullDataset = {
-            products: rawProducts,
-            positions,
-            inventory,
-            inspections,
-            kanban,
-            konSar,
-            termMerod,
-            beepulo,
-            fejSaru,
-            saruSpecs,
-            orders: orders.length >= 20 ? orders : INITIAL_ORDERS,
-            notes: notes.length > 0 ? notes : INITIAL_NOTES,
-          };
-          const res = await uploadAllToFirestore(initialDataset);
-          setFirebaseStats(res.stats);
+          // If Firestore has no documents yet, only upload if quota is not exhausted
+          if (!isFirestoreQuotaExhausted()) {
+            const initialDataset: FullDataset = {
+              products: rawProducts,
+              positions,
+              inventory,
+              inspections,
+              kanban,
+              konSar,
+              termMerod,
+              beepulo,
+              fejSaru,
+              saruSpecs,
+              orders: orders.length >= 20 ? orders : INITIAL_ORDERS,
+              notes: notes.length > 0 ? notes : INITIAL_NOTES,
+            };
+            const res = await uploadAllToFirestore(initialDataset);
+            if (res.quotaExceeded) {
+              setFirebaseError('A Firebase ingyenes napi írási kvótája betelt. A helyi gyorsítótár és memória aktív.');
+            } else {
+              setFirebaseStats(res.stats);
+            }
+          }
           setIsFirebaseConnected(true);
           setFirebaseSyncTime(new Date().toLocaleTimeString('hu-HU'));
         }
@@ -963,7 +969,6 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
           .then((liveOrders) => {
             if (liveOrders.length >= 20) {
               setOrders(liveOrders);
-              bulkSaveToFirestore(FIRESTORE_COLLECTIONS.ORDERS, liveOrders).catch(console.error);
               try {
                 localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(liveOrders));
               } catch {
@@ -971,14 +976,13 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
               }
             }
           })
-          .catch(console.error);
+          .catch(() => {});
 
         fetchNotesFromGoogleSheet(sheetUrl)
           .then((liveNotes) => {
             if (liveNotes.length > 0) {
               const sanitized = sanitizeNotes(liveNotes);
               setNotes(sanitized);
-              bulkSaveToFirestore(FIRESTORE_COLLECTIONS.NOTES, sanitized).catch(console.error);
               try {
                 localStorage.setItem(NOTES_STORAGE_KEY, JSON.stringify(sanitized));
               } catch {
@@ -986,10 +990,16 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
               }
             }
           })
-          .catch(console.error);
+          .catch(() => {});
       } catch (err: unknown) {
-        console.error('Firebase initialization error:', err);
-        setFirebaseError(err instanceof Error ? err.message : 'Firebase hiba');
+        if (isQuotaError(err)) {
+          setFirestoreQuotaExhausted(true);
+          console.warn('[Firebase] Napi ingyenes Firestore kvóta elérve.');
+          setFirebaseError('A Firebase ingyenes napi kvótája (20 000 művelet) elérte a határt. Az alkalmazás zavartalanul működik a helyi memóriából és gyorsítótárból.');
+        } else {
+          console.warn('Firebase inicializálási értesítés:', err);
+          setFirebaseError(err instanceof Error ? err.message : 'Firebase hiba');
+        }
       } finally {
         setIsFirebaseLoading(false);
       }

@@ -2,6 +2,7 @@ import React from 'react';
 import { useProducts } from '../context/ProductContext';
 import { ActiveTab } from '../types';
 import { CategoryDropdown } from './CategoryDropdown';
+import { COMMON_CATEGORIES, getCategoryColor } from '../utils/categoryColors';
 import {
   Boxes,
   LayoutDashboard,
@@ -39,6 +40,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     isSyncing,
     syncWithGoogleSheet,
     categories,
+    categoryCounts,
     filterByValue,
     filters,
   } = useProducts();
@@ -168,40 +170,60 @@ export const Sidebar: React.FC<SidebarProps> = ({
           />
         </div>
 
-        {/* Quick Category List */}
-        {categories.length > 0 && (
-          <div>
-            <p className="px-1 text-[10px] font-bold uppercase tracking-wider text-stone-400 mb-1.5">
-              Gyakori Kategóriák
-            </p>
-            <div className="space-y-1">
-              {categories.slice(0, 5).map((cat) => {
-                const isSelected = filters.category === cat;
-                return (
-                  <button
-                    key={cat}
-                    type="button"
-                    id={`sidebar-cat-${cat.replace(/[^a-zA-Z0-9]/g, '_')}`}
-                    onClick={() => {
-                      filterByValue('category', cat);
-                      setActiveTab('inventory');
-                    }}
-                    className={`w-full text-left px-2.5 py-1.5 rounded-md text-xs transition-colors flex items-center justify-between cursor-pointer ${
-                      isSelected
-                        ? 'bg-[#E0E9E8] text-[#006067] font-bold'
-                        : 'text-stone-600 hover:bg-stone-50 hover:text-stone-900'
-                    }`}
-                  >
+        {/* Quick Category List - 5 Gyakori Kategória */}
+        <div>
+          <p className="px-1 text-[10px] font-bold uppercase tracking-wider text-stone-400 mb-1.5">
+            Gyakori Kategóriák
+          </p>
+          <div className="space-y-1">
+            {COMMON_CATEGORIES.map((cat) => {
+              const isSelected =
+                filters.categories?.includes(cat) || filters.category === cat;
+              const count = categoryCounts[cat] || 0;
+              const palette = getCategoryColor(cat);
+
+              return (
+                <button
+                  key={cat}
+                  type="button"
+                  id={`sidebar-cat-${cat.replace(/[^a-zA-Z0-9]/g, '_')}`}
+                  onClick={() => {
+                    filterByValue('category', cat);
+                    setActiveTab('inventory');
+                  }}
+                  className={`w-full text-left px-2.5 py-1.5 rounded-md text-xs transition-colors flex items-center justify-between cursor-pointer ${
+                    isSelected
+                      ? 'bg-[#E0E9E8] text-[#006067] font-bold'
+                      : 'text-stone-600 hover:bg-stone-50 hover:text-stone-900'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className={`w-2 h-2 rounded-full flex-shrink-0 ${palette.dot}`}
+                    />
                     <span className="truncate text-xs">{cat}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    {count > 0 && (
+                      <span
+                        className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full ${
+                          isSelected
+                            ? 'bg-[#006067]/15 text-[#006067] font-bold'
+                            : 'bg-stone-100 text-stone-500'
+                        }`}
+                      >
+                        {count}
+                      </span>
+                    )}
                     {isSelected && (
                       <span className="w-1.5 h-1.5 rounded-full bg-[#006067] flex-shrink-0" />
                     )}
-                  </button>
-                );
-              })}
-            </div>
+                  </div>
+                </button>
+              );
+            })}
           </div>
-        )}
+        </div>
       </div>
 
       {/* Footer / Sync Status Box */}

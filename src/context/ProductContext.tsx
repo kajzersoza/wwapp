@@ -3,6 +3,7 @@ import {
   Product,
   WarehousePosition,
   InventoryRecord,
+  InventoryTransaction,
   ProductStockPosition,
   FilterState,
   ViewMode,
@@ -46,6 +47,7 @@ import {
 } from '../utils/productUtils';
 import {
   DEFAULT_GOOGLE_SHEET_URL,
+  fetchAllSheetsFromBackend,
   fetchProductsFromGoogleSheet,
   fetchPositionsFromGoogleSheet,
   fetchInventoryFromGoogleSheet,
@@ -307,7 +309,7 @@ interface ProductContextType {
   resetFilters: () => void;
 
   // Sync & Export
-  syncWithGoogleSheet: (customUrl?: string) => Promise<void>;
+  syncWithGoogleSheet: (customUrl?: string) => Promise<{ success: boolean; message: string; counts?: Record<string, number> }>;
   importCsvText: (csvText: string) => number;
   importPositionsCsvText: (csvText: string) => number;
   importInventoryCsvText: (csvText: string) => number;
@@ -1025,82 +1027,165 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     };
   }, []);
 
-  const syncWithGoogleSheet = async (customUrl?: string) => {
+  const syncWithGoogleSheet = async (customUrl?: string): Promise<{ success: boolean; message: string; counts?: Record<string, number> }> => {
     setIsSyncing(true);
     setSyncError(null);
     try {
       const targetUrl = customUrl || sheetUrl;
 
-      // 1. Fetch Products
-      const fetchedProducts = await fetchProductsFromGoogleSheet(targetUrl);
+      if (customUrl) {
+        setSheetUrl(customUrl);
+        try {
+          localStorage.setItem(SHEET_URL_KEY, customUrl);
+        } catch {
+          // ignore
+        }
+      }
+
+      // 1. Primary: Fast parallel server batch sync
+      let fetchedProducts: Product[] = [];
+      let fetchedPositions: WarehousePosition[] = [];
+      let fetchedInventory: InventoryTransaction[] = [];
+      let fetchedInspections: Inspection[] = [];
+      let fetchedKanban: KanbanItem[] = [];
+      let fetchedKonSar: KonSarRelation[] = [];
+      let fetchedTermMerod: TermMerodRelation[] = [];
+      let fetchedBeepulo: BeepuloRelation[] = [];
+      let fetchedFejSaru: FejSaruRelation[] = [];
+      let fetchedSaruSpecs: SaruSpec[] = [];
+      let fetchedOrders: Order[] = [];
+      let fetchedNotes: ProductNote[] = [];
+
+      const batch = await fetchAllSheetsFromBackend(targetUrl);
+      if (batch && batch.loadedCount > 0) {
+        if (batch.products && batch.products.length > 0) fetchedProducts = batch.products;
+        if (batch.positions && batch.positions.length > 0) fetchedPositions = batch.positions;
+        if (batch.inventory && batch.inventory.length > 0) fetchedInventory = batch.inventory;
+        if (batch.inspections && batch.inspections.length > 0) fetchedInspections = batch.inspections;
+        if (batch.kanban && batch.kanban.length > 0) fetchedKanban = batch.kanban;
+        if (batch.konSar && batch.konSar.length > 0) fetchedKonSar = batch.konSar;
+        if (batch.termMerod && batch.termMerod.length > 0) fetchedTermMerod = batch.termMerod;
+        if (batch.beepulo && batch.beepulo.length > 0) fetchedBeepulo = batch.beepulo;
+        if (batch.fejSaru && batch.fejSaru.length > 0) fetchedFejSaru = batch.fejSaru;
+        if (batch.saruSpecs && batch.saruSpecs.length > 0) fetchedSaruSpecs = batch.saruSpecs;
+        if (batch.orders && batch.orders.length > 0) fetchedOrders = batch.orders;
+        if (batch.notes && batch.notes.length > 0) fetchedNotes = batch.notes;
+      } else {
+        // Fallback: Individual proxy/CORS fetching in parallel
+        const [
+          pProducts,
+          pPositions,
+          pInventory,
+          pInspections,
+          pKanban,
+          pKonSar,
+          pTermMerod,
+          pBeepulo,
+          pFejSaru,
+          pSaruSpecs,
+          pOrders,
+          pNotes,
+        ] = await Promise.all([
+          fetchProductsFromGoogleSheet(targetUrl),
+          fetchPositionsFromGoogleSheet(targetUrl),
+          fetchInventoryFromGoogleSheet(targetUrl),
+          fetchInspectionsFromGoogleSheet(targetUrl),
+          fetchKanbanFromGoogleSheet(targetUrl),
+          fetchKonSarFromGoogleSheet(targetUrl),
+          fetchTermMerodFromGoogleSheet(targetUrl),
+          fetchBeepuloFromGoogleSheet(targetUrl),
+          fetchFejSaruFromGoogleSheet(targetUrl),
+          fetchSaruSpecsFromGoogleSheet(targetUrl),
+          fetchOrdersFromGoogleSheet(targetUrl),
+          fetchNotesFromGoogleSheet(targetUrl),
+        ]);
+
+        fetchedProducts = pProducts;
+        fetchedPositions = pPositions;
+        fetchedInventory = pInventory;
+        fetchedInspections = pInspections;
+        fetchedKanban = pKanban;
+        fetchedKonSar = pKonSar;
+        fetchedTermMerod = pTermMerod;
+        fetchedBeepulo = pBeepulo;
+        fetchedFejSaru = pFejSaru;
+        fetchedSaruSpecs = pSaruSpecs;
+        fetchedOrders = pOrders;
+        fetchedNotes = pNotes;
+      }
+
+      const counts: Record<string, number> = {
+        products: fetchedProducts.length,
+        positions: fetchedPositions.length,
+        inventory: fetchedInventory.length,
+        inspections: fetchedInspections.length,
+        kanban: fetchedKanban.length,
+        konSar: fetchedKonSar.length,
+        termMerod: fetchedTermMerod.length,
+        beepulo: fetchedBeepulo.length,
+        fejSaru: fetchedFejSaru.length,
+        saruSpecs: fetchedSaruSpecs.length,
+        orders: fetchedOrders.length,
+        notes: fetchedNotes.length,
+      };
+
+      const hasFetchedData = Object.values(counts).some((count) => count > 0);
+      if (!hasFetchedData) {
+        const errorMsg =
+          'Nem sikerült adatokat beolvasni a megadott Google Táblázatból. Kérjük ellenőrizze a táblázat linkjét, és győződjön meg róla, hogy a megosztás "Bárki, aki rendelkezik a linkkel" módra van állítva!';
+        setSyncError(errorMsg);
+        return { success: false, message: errorMsg, counts };
+      }
+
+      // Update state and persistent localStorage cache for each fetched sheet
       if (fetchedProducts.length > 0) {
         setRawProducts(fetchedProducts);
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(fetchedProducts)); } catch {}
       }
-
-      // 2. Fetch Positions
-      const fetchedPositions = await fetchPositionsFromGoogleSheet(targetUrl);
       if (fetchedPositions.length > 0) {
         setPositions(fetchedPositions);
+        try { localStorage.setItem(POSITIONS_STORAGE_KEY, JSON.stringify(fetchedPositions)); } catch {}
       }
-
-      // 3. Fetch Inventory
-      const fetchedInventory = await fetchInventoryFromGoogleSheet(targetUrl);
       if (fetchedInventory.length > 0) {
         setInventory(fetchedInventory);
+        try { localStorage.setItem(INVENTORY_STORAGE_KEY, JSON.stringify(fetchedInventory)); } catch {}
       }
-
-      // 4. Fetch Inspections (Karbantartás munkalap)
-      const fetchedInspections = await fetchInspectionsFromGoogleSheet(targetUrl);
       if (fetchedInspections.length > 0) {
         setInspections(fetchedInspections);
+        try { localStorage.setItem(INSPECTIONS_STORAGE_KEY, JSON.stringify(fetchedInspections)); } catch {}
       }
-
-      // 5. Fetch Kanban (kanban munkalap: Terv, Folyamatban, Teszt, Befejezve)
-      const fetchedKanban = await fetchKanbanFromGoogleSheet(targetUrl);
       if (fetchedKanban.length > 0) {
         setKanban(fetchedKanban);
+        try { localStorage.setItem(KANBAN_STORAGE_KEY, JSON.stringify(fetchedKanban)); } catch {}
       }
-
-      // 6. Fetch KonSar (Konnektor - Saru kapcsolatok munkalap)
-      const fetchedKonSar = await fetchKonSarFromGoogleSheet(targetUrl);
       if (fetchedKonSar.length > 0) {
         setKonSar(fetchedKonSar);
+        try { localStorage.setItem(KONSAR_STORAGE_KEY, JSON.stringify(fetchedKonSar)); } catch {}
       }
-
-      // 6. Fetch TermMerod (Termék - Mérődoboz kapcsolatok munkalap)
-      const fetchedTermMerod = await fetchTermMerodFromGoogleSheet(targetUrl);
       if (fetchedTermMerod.length > 0) {
         setTermMerod(fetchedTermMerod);
+        try { localStorage.setItem(TERMMEROD_STORAGE_KEY, JSON.stringify(fetchedTermMerod)); } catch {}
       }
-
-      // 7. Fetch Beépülő Alkatrész munkalap
-      const fetchedBeepulo = await fetchBeepuloFromGoogleSheet(targetUrl);
       if (fetchedBeepulo.length > 0) {
         setBeepulo(fetchedBeepulo);
+        try { localStorage.setItem(BEEPULO_STORAGE_KEY, JSON.stringify(fetchedBeepulo)); } catch {}
       }
-
-      // 8. Fetch FejSaru (Saruzófej - Saru kapcsolatok munkalap)
-      const fetchedFejSaru = await fetchFejSaruFromGoogleSheet(targetUrl);
       if (fetchedFejSaru.length > 0) {
         setFejSaru(fetchedFejSaru);
+        try { localStorage.setItem(FEJSARU_STORAGE_KEY, JSON.stringify(fetchedFejSaru)); } catch {}
       }
-
-      // 9. Fetch Saru Segédtáblázat ('Segédtáblázat 1. Saruk másolata' munkalap)
-      const fetchedSaruSpecs = await fetchSaruSpecsFromGoogleSheet(targetUrl);
       if (fetchedSaruSpecs.length > 0) {
         setSaruSpecs(fetchedSaruSpecs);
+        try { localStorage.setItem(SARU_SPECS_STORAGE_KEY, JSON.stringify(fetchedSaruSpecs)); } catch {}
       }
-
-      // 10. Fetch Rendelés munkalap
-      const fetchedOrders = await fetchOrdersFromGoogleSheet(targetUrl);
       if (fetchedOrders.length > 0) {
         setOrders(fetchedOrders);
+        try { localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(fetchedOrders)); } catch {}
       }
-
-      // 11. Fetch Note munkalap
-      const fetchedNotes = await fetchNotesFromGoogleSheet(targetUrl);
       if (fetchedNotes.length > 0) {
-        setNotes(sanitizeNotes(fetchedNotes));
+        const sanitized = sanitizeNotes(fetchedNotes);
+        setNotes(sanitized);
+        try { localStorage.setItem(NOTES_STORAGE_KEY, JSON.stringify(sanitized)); } catch {}
       }
 
       // Also persist fetched data into Firebase Firestore
@@ -1118,6 +1203,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         orders: fetchedOrders.length > 0 ? fetchedOrders : orders,
         notes: fetchedNotes.length > 0 ? fetchedNotes : notes,
       };
+
       if (!isFirestoreQuotaExhausted()) {
         uploadAllToFirestore(dataset)
           .then((res) => {
@@ -1140,11 +1226,33 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
       });
       const dateStr = `${new Date().toLocaleDateString('hu-HU')} ${now}`;
       setLastSyncedAt(dateStr);
-      localStorage.setItem(SYNC_TIME_KEY, dateStr);
+      try {
+        localStorage.setItem(SYNC_TIME_KEY, dateStr);
+      } catch {
+        // ignore
+      }
+
+      const summaryParts: string[] = [];
+      if (counts.products > 0) summaryParts.push(`${counts.products} termék`);
+      if (counts.positions > 0) summaryParts.push(`${counts.positions} pozíció`);
+      if (counts.inventory > 0) summaryParts.push(`${counts.inventory} mozgás`);
+      if (counts.inspections > 0) summaryParts.push(`${counts.inspections} karbantartás`);
+      if (counts.kanban > 0) summaryParts.push(`${counts.kanban} feladat`);
+      if (counts.konSar > 0) summaryParts.push(`${counts.konSar} KonSar`);
+      if (counts.termMerod > 0) summaryParts.push(`${counts.termMerod} TermMerod`);
+      if (counts.beepulo > 0) summaryParts.push(`${counts.beepulo} Beépülő`);
+      if (counts.fejSaru > 0) summaryParts.push(`${counts.fejSaru} FejSaru`);
+      if (counts.saruSpecs > 0) summaryParts.push(`${counts.saruSpecs} saru spec`);
+      if (counts.orders > 0) summaryParts.push(`${counts.orders} rendelés`);
+      if (counts.notes > 0) summaryParts.push(`${counts.notes} jegyzet`);
+
+      const successMsg = `Sikeres szinkronizáció! Beolvasva: ${summaryParts.join(', ')}. Az adatok azonnal megjelentek a felületen!`;
+      return { success: true, message: successMsg, counts };
     } catch (err: unknown) {
       console.error('Google Sheet sync error:', err);
       const message = err instanceof Error ? err.message : 'Sikertelen szinkronizáció';
       setSyncError(message);
+      return { success: false, message, counts: {} };
     } finally {
       setIsSyncing(false);
     }

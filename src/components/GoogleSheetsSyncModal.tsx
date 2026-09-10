@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useProducts } from '../context/ProductContext';
 import {
   FileSpreadsheet,
@@ -92,12 +92,29 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
   const [exportSheetType, setExportSheetType] = useState<'products' | 'positions' | 'inventory' | 'inspections' | 'kanban' | 'konsar' | 'termmerod' | 'beepulo' | 'fejsaru'>('products');
   const [isFirebaseActionLoading, setIsFirebaseActionLoading] = useState(false);
 
+  useEffect(() => {
+    if (sheetUrl) {
+      setCustomUrl(sheetUrl);
+    }
+  }, [sheetUrl]);
+
   if (!isOpen) return null;
 
   const handleLiveSync = async () => {
     setSheetUrl(customUrl);
-    await syncWithGoogleSheet(customUrl);
-    setImportResult('A szinkronizáció sikeresen lezajlott a Google Táblázat összes munkalapjáról és automatikusan el lett mentve a Firebase Firestore-ba!');
+    setImportResult('Szinkronizálás folyamatban...');
+    try {
+      const result = await syncWithGoogleSheet(customUrl);
+      if (result && !result.success) {
+        setImportResult(`Hiba: ${result.message}`);
+      } else if (result && result.message) {
+        setImportResult(result.message);
+      } else {
+        setImportResult('A szinkronizáció sikeresen lezajlott a Google Táblázatból!');
+      }
+    } catch (err: unknown) {
+      setImportResult(`Hiba történt: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   const handleFirebaseRefresh = async () => {

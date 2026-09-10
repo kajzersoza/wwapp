@@ -409,10 +409,30 @@ export function parseInspectionsCsv(csvText: string): Inspection[] {
 }
 
 /**
- * Extracts Google Sheet ID from URL
+ * Extracts Google Sheet ID from URL or ID string
+ * Handles standard docs.google.com URLs, published /d/e/2PACX-... web sheets, and raw IDs
  */
 export function extractSheetId(url: string): string | null {
-  const match = url.match(/\/d\/([a-zA-Z0-9-_]+)/);
+  if (!url) return null;
+  const trimmed = url.trim();
+
+  // If user passed a raw Sheet ID
+  if (/^[a-zA-Z0-9-_]{20,}$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  // Published web sheet /d/e/2PACX-...
+  const pubMatch = trimmed.match(/\/d\/e\/([a-zA-Z0-9-_]+)/);
+  if (pubMatch) {
+    return `e/${pubMatch[1]}`;
+  }
+
+  // Standard Google Sheet URL /d/ID
+  const match = trimmed.match(/\/d\/([a-zA-Z0-9-_]+)/);
+  if (match && match[1] !== 'e') {
+    return match[1];
+  }
+
   return match ? match[1] : null;
 }
 
@@ -420,7 +440,133 @@ export function extractSheetId(url: string): string | null {
  * Builds Google Visualization API URL with headers=1 for proper row parsing and CORS support
  */
 export function buildGvizCsvUrl(sheetId: string, sheetName: string): string {
+  if (sheetId.startsWith('2PACX-') || sheetId.startsWith('e/')) {
+    const cleanId = sheetId.replace(/^e\//, '');
+    return `https://docs.google.com/spreadsheets/d/e/${cleanId}/pub?output=csv&sheet=${encodeURIComponent(sheetName)}`;
+  }
   return `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&headers=1&sheet=${encodeURIComponent(sheetName)}`;
+}
+
+/**
+ * Universal helper that fetches sheet CSV text:
+ * 1. Primary: Server-side proxy /api/sheets-proxy (bypasses browser CORS completely, instant & fresh)
+ * 2. Secondary: Direct Google Sheets API (gviz or pub)
+ * 3. Fallback: Public CORS proxy (allorigins)
+ */
+export async function fetchSheetCsv(
+  sheetUrlOrId: string,
+  candidateNames: string[]
+): Promise<string | null> {
+  const sheetId = extractSheetId(sheetUrlOrId);
+  if (!sheetId) return null;
+
+  // 1. Primary: Internal Express server proxy
+  for (const name of candidateNames) {
+    try {
+      const proxyUrl = `/api/sheets-proxy?sheetId=${encodeURIComponent(sheetId)}&sheetName=${encodeURIComponent(name)}`;
+      const res = await fetch(proxyUrl);
+      if (res.ok) {
+        const text = await res.text();
+        if (text && !text.includes('<!DOCTYPE html>') && !text.includes('<html') && text.length > 5) {
+          return text;
+        }
+      }
+    } catch {
+      // Continue to next candidate
+    }
+  }
+
+  // 2. Direct Google Visualization / Export API
+  for (const name of candidateNames) {
+    try {
+      const gvizUrl = buildGvizCsvUrl(sheetId, name);
+      const res = await fetch(gvizUrl);
+      if (res.ok) {
+        const text = await res.text();
+        if (text && !text.includes('<!DOCTYPE html>') && !text.includes('<html') && text.length > 5) {
+          return text;
+        }
+      }
+    } catch {
+      // Continue
+    }
+  }
+
+  // 3. Fallback: Public CORS proxy
+  for (const name of candidateNames) {
+    try {
+      const targetUrl = buildGvizCsvUrl(sheetId, name);
+      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+      const res = await fetch(proxyUrl);
+      if (res.ok) {
+        const text = await res.text();
+        if (text && !text.includes('<!DOCTYPE html>') && !text.includes('<html') && text.length > 5) {
+          return text;
+        }
+      }
+    } catch {
+      // Continue
+    }
+  }
+
+  return null;
+}
+
+export interface BackendBatchSyncResult {
+  products?: Product[];
+  positions?: WarehousePosition[];
+  inventory?: InventoryTransaction[];
+  inspections?: Inspection[];
+  kanban?: KanbanItem[];
+  konSar?: KonSarRelation[];
+  termMerod?: TermMerodRelation[];
+  beepulo?: BeepuloRelation[];
+  fejSaru?: FejSaruRelation[];
+  saruSpecs?: SaruSpec[];
+  orders?: Order[];
+  notes?: ProductNote[];
+  loadedCount: number;
+  sheetId?: string;
+}
+
+/**
+ * Fast parallel batch sync from server
+ */
+export async function fetchAllSheetsFromBackend(sheetUrl?: string): Promise<BackendBatchSyncResult | null> {
+  try {
+    const res = await fetch('/api/sync-all-sheets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sheetUrl }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.success || !data.sheets) return null;
+
+    const s = data.sheets;
+    const result: BackendBatchSyncResult = {
+      loadedCount: data.loadedCount || 0,
+      sheetId: data.sheetId,
+    };
+
+    if (s.products) result.products = parseProductsCsv(s.products);
+    if (s.positions) result.positions = parsePositionsCsv(s.positions);
+    if (s.inventory) result.inventory = parseInventoryCsv(s.inventory);
+    if (s.inspections) result.inspections = parseInspectionsCsv(s.inspections);
+    if (s.kanban) result.kanban = parseKanbanCsv(s.kanban);
+    if (s.konsar) result.konSar = parseKonSarCsv(s.konsar);
+    if (s.termmerod) result.termMerod = parseTermMerodCsv(s.termmerod);
+    if (s.beepulo) result.beepulo = parseBeepuloCsv(s.beepulo);
+    if (s.fejsaru) result.fejSaru = parseFejSaruCsv(s.fejsaru);
+    if (s.saruspecs) result.saruSpecs = parseSaruSpecsCsv(s.saruspecs);
+    if (s.orders) result.orders = parseOrdersCsv(s.orders);
+    if (s.notes) result.notes = parseNotesCsv(s.notes);
+
+    return result;
+  } catch (err) {
+    console.warn('Backend batch sync nem érhető el:', err);
+    return null;
+  }
 }
 
 /**
@@ -428,61 +574,17 @@ export function buildGvizCsvUrl(sheetId: string, sheetName: string): string {
  */
 export async function fetchProductsFromGoogleSheet(sheetUrl?: string): Promise<Product[]> {
   const targetUrl = sheetUrl || DEFAULT_GOOGLE_SHEET_CSV_URL;
-  const sheetId = extractSheetId(targetUrl);
+  const sheetNames = ['Products', 'Productions', 'Termékek', 'Termekek'];
 
-  // 1. Primary: Google Visualization API with headers=1 (natively supports CORS in browsers!)
-  if (sheetId) {
-    const sheetNames = ['Products', 'Productions', 'Termékek', 'Termekek'];
-    for (const name of sheetNames) {
-      try {
-        const gvizUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&headers=1&sheet=${encodeURIComponent(name)}`;
-        const response = await fetch(gvizUrl);
-        if (response.ok) {
-          const csvText = await response.text();
-          if (csvText && csvText.includes('Termék ID')) {
-            const parsed = parseProductsCsv(csvText);
-            if (parsed.length > 50) {
-              return parsed;
-            }
-          }
-        }
-      } catch (err) {
-        console.warn(`Google Sheets gviz letöltési hiba (${name}):`, err);
-      }
+  const csvText = await fetchSheetCsv(targetUrl, sheetNames);
+  if (csvText && csvText.includes('Termék ID')) {
+    const parsed = parseProductsCsv(csvText);
+    if (parsed.length > 0) {
+      return parsed;
     }
   }
 
-  // 2. Secondary: Direct export?format=csv
-  try {
-    let directUrl = targetUrl;
-    if (sheetId) {
-      directUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&sheet=Products`;
-    }
-    const response = await fetch(directUrl);
-    if (response.ok) {
-      const csvText = await response.text();
-      if (csvText && csvText.includes('Termék ID')) {
-        const parsed = parseProductsCsv(csvText);
-        if (parsed.length > 50) return parsed;
-      }
-    }
-
-    if (sheetId) {
-      const altUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
-      const altRes = await fetch(altUrl);
-      if (altRes.ok) {
-        const altText = await altRes.text();
-        if (altText && altText.includes('Termék ID')) {
-          const parsed = parseProductsCsv(altText);
-          if (parsed.length > 50) return parsed;
-        }
-      }
-    }
-  } catch (err) {
-    console.warn('Google Sheets Products közvetlen letöltési figyelmeztetés:', err);
-  }
-
-  // 3. Fallback to local static cache if online sheet unreachable
+  // Fallback to local static cache only if live sheets fail
   try {
     const localRes = await fetch('/data/products.csv');
     if (localRes.ok) {
@@ -503,18 +605,12 @@ export async function fetchProductsFromGoogleSheet(sheetUrl?: string): Promise<P
  */
 export async function fetchPositionsFromGoogleSheet(sheetUrl?: string): Promise<WarehousePosition[]> {
   const url = sheetUrl || DEFAULT_GOOGLE_SHEET_URL;
-  const sheetId = extractSheetId(url);
-  if (!sheetId) return [];
-
-  const targetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&headers=1&sheet=Positions`;
-  try {
-    const response = await fetch(targetUrl);
-    if (!response.ok) return [];
-    const csvText = await response.text();
+  const sheetNames = ['Positions', 'Pozíciók', 'Poziciok', 'WarehousePositions'];
+  const csvText = await fetchSheetCsv(url, sheetNames);
+  if (csvText) {
     return parsePositionsCsv(csvText);
-  } catch {
-    return [];
   }
+  return [];
 }
 
 /**
@@ -522,28 +618,11 @@ export async function fetchPositionsFromGoogleSheet(sheetUrl?: string): Promise<
  */
 export async function fetchInventoryFromGoogleSheet(sheetUrl?: string): Promise<InventoryTransaction[]> {
   const url = sheetUrl || DEFAULT_GOOGLE_SHEET_URL;
-  const sheetId = extractSheetId(url);
-  if (!sheetId) return [];
-
-  // Try "Inventory Transactions" sheet first
-  const trySheets = ['Inventory Transactions', 'Inventory_Transactions', 'InventoryTransactions', 'Inventory'];
-
-  for (const sheetName of trySheets) {
-    try {
-      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
-      const response = await fetch(targetUrl);
-      if (response.ok) {
-        const csvText = await response.text();
-        const records = parseInventoryCsv(csvText);
-        if (records.length > 0) {
-          return records;
-        }
-      }
-    } catch {
-      // Continue to next sheet variant
-    }
+  const trySheets = ['Inventory Transactions', 'Inventory', 'Inventory_Transactions', 'InventoryTransactions', 'Készletmozgás', 'Keszletmozgas'];
+  const csvText = await fetchSheetCsv(url, trySheets);
+  if (csvText) {
+    return parseInventoryCsv(csvText);
   }
-
   return [];
 }
 
@@ -626,27 +705,11 @@ export const exportInventoryTransactionsToCsv = exportInventoryToCsv;
  */
 export async function fetchInspectionsFromGoogleSheet(sheetUrl?: string): Promise<Inspection[]> {
   const url = sheetUrl || DEFAULT_GOOGLE_SHEET_URL;
-  const sheetId = extractSheetId(url);
-  if (!sheetId) return [];
-
   const trySheets = ['Inspections', 'Inspection', 'Karbantartás', 'Karbantartások', 'Karbantartasok', 'Maintenance'];
-
-  for (const sheetName of trySheets) {
-    try {
-      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
-      const response = await fetch(targetUrl);
-      if (response.ok) {
-        const csvText = await response.text();
-        const records = parseInspectionsCsv(csvText);
-        if (records.length > 0) {
-          return records;
-        }
-      }
-    } catch {
-      // Continue to next sheet variant
-    }
+  const csvText = await fetchSheetCsv(url, trySheets);
+  if (csvText) {
+    return parseInspectionsCsv(csvText);
   }
-
   return [];
 }
 
@@ -765,27 +828,11 @@ export function parseKonSarCsv(csvText: string): KonSarRelation[] {
  */
 export async function fetchKonSarFromGoogleSheet(sheetUrl?: string): Promise<KonSarRelation[]> {
   const url = sheetUrl || DEFAULT_GOOGLE_SHEET_URL;
-  const sheetId = extractSheetId(url);
-  if (!sheetId) return [];
-
   const trySheets = ['KonSar', 'Konsar', 'Kon_Sar', 'Konnektor Saru', 'Konnektor-Saru'];
-
-  for (const sheetName of trySheets) {
-    try {
-      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
-      const response = await fetch(targetUrl);
-      if (response.ok) {
-        const csvText = await response.text();
-        const records = parseKonSarCsv(csvText);
-        if (records.length > 0) {
-          return records;
-        }
-      }
-    } catch {
-      // Continue to next sheet variant
-    }
+  const csvText = await fetchSheetCsv(url, trySheets);
+  if (csvText) {
+    return parseKonSarCsv(csvText);
   }
-
   return [];
 }
 
@@ -915,9 +962,6 @@ export function parseTermMerodCsv(csvText: string): TermMerodRelation[] {
  */
 export async function fetchTermMerodFromGoogleSheet(sheetUrl?: string): Promise<TermMerodRelation[]> {
   const url = sheetUrl || DEFAULT_GOOGLE_SHEET_URL;
-  const sheetId = extractSheetId(url);
-  if (!sheetId) return [];
-
   const trySheets = [
     'TermMerod',
     'Termmerod',
@@ -929,23 +973,10 @@ export async function fetchTermMerodFromGoogleSheet(sheetUrl?: string): Promise<
     'Merodoboz',
     'Mérődoboz',
   ];
-
-  for (const sheetName of trySheets) {
-    try {
-      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
-      const response = await fetch(targetUrl);
-      if (response.ok) {
-        const csvText = await response.text();
-        const records = parseTermMerodCsv(csvText);
-        if (records.length > 0) {
-          return records;
-        }
-      }
-    } catch {
-      // Continue to next sheet variant
-    }
+  const csvText = await fetchSheetCsv(url, trySheets);
+  if (csvText) {
+    return parseTermMerodCsv(csvText);
   }
-
   return [];
 }
 
@@ -1130,9 +1161,6 @@ export function parseBeepuloCsv(csvText: string): BeepuloRelation[] {
  */
 export async function fetchBeepuloFromGoogleSheet(sheetUrl?: string): Promise<BeepuloRelation[]> {
   const url = sheetUrl || DEFAULT_GOOGLE_SHEET_URL;
-  const sheetId = extractSheetId(url);
-  if (!sheetId) return [];
-
   const trySheets = [
     'Beépülő alkatrész',
     'Beépülő alkatrészek',
@@ -1150,23 +1178,10 @@ export async function fetchBeepuloFromGoogleSheet(sheetUrl?: string): Promise<Be
     'Component',
     'BOM',
   ];
-
-  for (const sheetName of trySheets) {
-    try {
-      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
-      const response = await fetch(targetUrl);
-      if (response.ok) {
-        const csvText = await response.text();
-        const records = parseBeepuloCsv(csvText);
-        if (records.length > 0) {
-          return records;
-        }
-      }
-    } catch {
-      // Continue to next sheet variant
-    }
+  const csvText = await fetchSheetCsv(url, trySheets);
+  if (csvText) {
+    return parseBeepuloCsv(csvText);
   }
-
   return [];
 }
 
@@ -1327,9 +1342,6 @@ export function parseFejSaruCsv(csvText: string): FejSaruRelation[] {
  */
 export async function fetchFejSaruFromGoogleSheet(sheetUrl?: string): Promise<FejSaruRelation[]> {
   const url = sheetUrl || DEFAULT_GOOGLE_SHEET_URL;
-  const sheetId = extractSheetId(url);
-  if (!sheetId) return [];
-
   const trySheets = [
     'FejSaru',
     'Fejsaru',
@@ -1345,23 +1357,10 @@ export async function fetchFejSaruFromGoogleSheet(sheetUrl?: string): Promise<Fe
     'Fejek Saruk',
     'FejSaru kapcsolatok',
   ];
-
-  for (const sheetName of trySheets) {
-    try {
-      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
-      const response = await fetch(targetUrl);
-      if (response.ok) {
-        const csvText = await response.text();
-        const records = parseFejSaruCsv(csvText);
-        if (records.length > 0) {
-          return records;
-        }
-      }
-    } catch {
-      // Continue to next sheet variant
-    }
+  const csvText = await fetchSheetCsv(url, trySheets);
+  if (csvText) {
+    return parseFejSaruCsv(csvText);
   }
-
   return [];
 }
 
@@ -1651,9 +1650,6 @@ export function parseSaruSpecsCsv(csvText: string): SaruSpec[] {
  */
 export async function fetchSaruSpecsFromGoogleSheet(sheetUrl?: string): Promise<SaruSpec[]> {
   const url = sheetUrl || DEFAULT_GOOGLE_SHEET_URL;
-  const sheetId = extractSheetId(url);
-  if (!sheetId) return [];
-
   const trySheets = [
     'Segédtáblázat 1. Saruk másolata',
     'Segédtáblázat 1. Saruk masolata',
@@ -1665,23 +1661,10 @@ export async function fetchSaruSpecsFromGoogleSheet(sheetUrl?: string): Promise<
     'Saru Segedtablazat',
     'SaruSpecs',
   ];
-
-  for (const sheetName of trySheets) {
-    try {
-      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
-      const response = await fetch(targetUrl);
-      if (response.ok) {
-        const csvText = await response.text();
-        const records = parseSaruSpecsCsv(csvText);
-        if (records.length > 0) {
-          return records;
-        }
-      }
-    } catch {
-      // Continue to next sheet variant
-    }
+  const csvText = await fetchSheetCsv(url, trySheets);
+  if (csvText) {
+    return parseSaruSpecsCsv(csvText);
   }
-
   return [];
 }
 
@@ -2041,9 +2024,6 @@ export function parseKanbanCsv(csvText: string): KanbanItem[] {
  */
 export async function fetchKanbanFromGoogleSheet(sheetUrl?: string): Promise<KanbanItem[]> {
   const url = sheetUrl || DEFAULT_GOOGLE_SHEET_URL;
-  const sheetId = extractSheetId(url);
-  if (!sheetId) return [];
-
   const trySheets = [
     'kanban',
     'Kanban',
@@ -2056,23 +2036,10 @@ export async function fetchKanbanFromGoogleSheet(sheetUrl?: string): Promise<Kan
     'Tasks',
     'Task',
   ];
-
-  for (const sheetName of trySheets) {
-    try {
-      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
-      const response = await fetch(targetUrl);
-      if (response.ok) {
-        const csvText = await response.text();
-        const records = parseKanbanCsv(csvText);
-        if (records.length > 0) {
-          return records;
-        }
-      }
-    } catch {
-      // Continue to next sheet variant
-    }
+  const csvText = await fetchSheetCsv(url, trySheets);
+  if (csvText) {
+    return parseKanbanCsv(csvText);
   }
-
   return [];
 }
 
@@ -2250,9 +2217,6 @@ export function exportOrdersToCsv(orders: Order[]): string {
  */
 export async function fetchOrdersFromGoogleSheet(sheetUrl?: string): Promise<Order[]> {
   const url = sheetUrl || DEFAULT_GOOGLE_SHEET_URL;
-  const sheetId = extractSheetId(url);
-  if (!sheetId) return [];
-
   const trySheets = [
     'Rendelés',
     'Rendeles',
@@ -2263,23 +2227,10 @@ export async function fetchOrdersFromGoogleSheet(sheetUrl?: string): Promise<Ord
     'RENDELÉS',
     'RENDELES',
   ];
-
-  for (const sheetName of trySheets) {
-    try {
-      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
-      const response = await fetch(targetUrl);
-      if (response.ok) {
-        const csvText = await response.text();
-        const records = parseOrdersCsv(csvText);
-        if (records.length > 0) {
-          return records;
-        }
-      }
-    } catch {
-      // Continue to next sheet variant
-    }
+  const csvText = await fetchSheetCsv(url, trySheets);
+  if (csvText) {
+    return parseOrdersCsv(csvText);
   }
-
   return [];
 }
 
@@ -2671,14 +2622,19 @@ export function exportNotesToCsv(notes: ProductNote[]): string {
 export async function fetchNotesFromGoogleSheet(sheetUrl?: string): Promise<ProductNote[]> {
   const url = sheetUrl || DEFAULT_GOOGLE_SHEET_URL;
   const sheetId = extractSheetId(url);
-  if (!sheetId) return [];
 
   // Start extracting live formula hyperlinks from XLSX in parallel
-  const liveHyperlinksPromise = extractHyperlinksFromXlsx(sheetId).catch(() => ({
-    byNoteId: new Map<string, string>(),
-    byTermekId: new Map<string, string>(),
-    byRow: new Map<number, string>(),
-  }));
+  const liveHyperlinksPromise = sheetId
+    ? extractHyperlinksFromXlsx(sheetId).catch(() => ({
+        byNoteId: new Map<string, string>(),
+        byTermekId: new Map<string, string>(),
+        byRow: new Map<number, string>(),
+      }))
+    : Promise.resolve({
+        byNoteId: new Map<string, string>(),
+        byTermekId: new Map<string, string>(),
+        byRow: new Map<number, string>(),
+      });
 
   const trySheets = [
     'Note',
@@ -2692,34 +2648,26 @@ export async function fetchNotesFromGoogleSheet(sheetUrl?: string): Promise<Prod
     'Termek Note',
   ];
 
-  for (const sheetName of trySheets) {
-    try {
-      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
-      const response = await fetch(targetUrl);
-      if (response.ok) {
-        const csvText = await response.text();
-        // Wait for live hyperlinks with a reasonable timeout so we don't block
-        const liveHyperlinks = await Promise.race([
-          liveHyperlinksPromise,
-          new Promise<ExtractedHyperlinks>((resolve) =>
-            setTimeout(
-              () =>
-                resolve({
-                  byNoteId: new Map(),
-                  byTermekId: new Map(),
-                  byRow: new Map(),
-                }),
-              3500
-            )
-          ),
-        ]);
-        const records = parseNotesCsv(csvText, liveHyperlinks);
-        if (records.length > 0) {
-          return records;
-        }
-      }
-    } catch {
-      // Continue to next sheet variant
+  const csvText = await fetchSheetCsv(url, trySheets);
+  if (csvText) {
+    // Wait for live hyperlinks with a reasonable timeout so we don't block
+    const liveHyperlinks = await Promise.race([
+      liveHyperlinksPromise,
+      new Promise<ExtractedHyperlinks>((resolve) =>
+        setTimeout(
+          () =>
+            resolve({
+              byNoteId: new Map(),
+              byTermekId: new Map(),
+              byRow: new Map(),
+            }),
+          3500
+        )
+      ),
+    ]);
+    const records = parseNotesCsv(csvText, liveHyperlinks);
+    if (records.length > 0) {
+      return records;
     }
   }
 

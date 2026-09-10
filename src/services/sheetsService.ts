@@ -1,6 +1,12 @@
 import Papa from 'papaparse';
 import JSZip from 'jszip';
-import { NOTE_HYPERLINKS_MAP, getNotePageCount } from '../data/noteHyperlinksMap';
+import {
+  NOTE_HYPERLINKS_MAP,
+  NOTE_HYPERLINKS_BY_TERMEK_ID,
+  isPlaceholderUrl,
+  resolveNoteUrl,
+  getNotePageCount,
+} from '../data/noteHyperlinksMap';
 import {
   Product,
   WarehousePosition,
@@ -23,7 +29,7 @@ export const DEFAULT_GOOGLE_SHEET_URL =
   'https://docs.google.com/spreadsheets/d/11AeIQrodsaICM3_P6VRQm7bShU5dMfjw/edit?usp=sharing&ouid=112333423231922049269&rtpof=true&sd=true';
 
 export const DEFAULT_GOOGLE_SHEET_CSV_URL =
-  'https://docs.google.com/spreadsheets/d/11AeIQrodsaICM3_P6VRQm7bShU5dMfjw/gviz/tq?tqx=out:csv&sheet=Products';
+  'https://docs.google.com/spreadsheets/d/11AeIQrodsaICM3_P6VRQm7bShU5dMfjw/export?format=csv&sheet=Products';
 
 import { resolveDriveImageUrl } from './driveImageService';
 
@@ -411,49 +417,85 @@ export function extractSheetId(url: string): string | null {
 }
 
 /**
+ * Builds Google Visualization API URL with headers=1 for proper row parsing and CORS support
+ */
+export function buildGvizCsvUrl(sheetId: string, sheetName: string): string {
+  return `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&headers=1&sheet=${encodeURIComponent(sheetName)}`;
+}
+
+/**
  * Fetches products from Google Sheet URL
  */
 export async function fetchProductsFromGoogleSheet(sheetUrl?: string): Promise<Product[]> {
-  let targetUrl = sheetUrl || DEFAULT_GOOGLE_SHEET_CSV_URL;
+  const targetUrl = sheetUrl || DEFAULT_GOOGLE_SHEET_CSV_URL;
+  const sheetId = extractSheetId(targetUrl);
 
-  if (targetUrl.includes('/edit') || !targetUrl.includes('export') && !targetUrl.includes('gviz')) {
-    const sheetId = extractSheetId(targetUrl);
-    if (sheetId) {
-      targetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=Products`;
+  // 1. Primary: Google Visualization API with headers=1 (natively supports CORS in browsers!)
+  if (sheetId) {
+    const sheetNames = ['Products', 'Productions', 'Termékek', 'Termekek'];
+    for (const name of sheetNames) {
+      try {
+        const gvizUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&headers=1&sheet=${encodeURIComponent(name)}`;
+        const response = await fetch(gvizUrl);
+        if (response.ok) {
+          const csvText = await response.text();
+          if (csvText && csvText.includes('Termék ID')) {
+            const parsed = parseProductsCsv(csvText);
+            if (parsed.length > 50) {
+              return parsed;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn(`Google Sheets gviz letöltési hiba (${name}):`, err);
+      }
     }
   }
 
+  // 2. Secondary: Direct export?format=csv
   try {
-    const response = await fetch(targetUrl);
-    if (!response.ok) {
-      // Try fallback to Productions sheet
-      const sheetId = extractSheetId(targetUrl);
-      if (sheetId) {
-        const altUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=Productions`;
-        const altRes = await fetch(altUrl);
-        if (altRes.ok) {
-          const csvText = await altRes.text();
-          return parseProductsCsv(csvText);
+    let directUrl = targetUrl;
+    if (sheetId) {
+      directUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&sheet=Products`;
+    }
+    const response = await fetch(directUrl);
+    if (response.ok) {
+      const csvText = await response.text();
+      if (csvText && csvText.includes('Termék ID')) {
+        const parsed = parseProductsCsv(csvText);
+        if (parsed.length > 50) return parsed;
+      }
+    }
+
+    if (sheetId) {
+      const altUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
+      const altRes = await fetch(altUrl);
+      if (altRes.ok) {
+        const altText = await altRes.text();
+        if (altText && altText.includes('Termék ID')) {
+          const parsed = parseProductsCsv(altText);
+          if (parsed.length > 50) return parsed;
         }
       }
-      throw new Error(`Google Sheets letöltési hiba: ${response.status} ${response.statusText}`);
     }
-
-    const csvText = await response.text();
-    return parseProductsCsv(csvText);
   } catch (err) {
-    // If specific sheet name failed, try standard default sheet
-    const sheetId = extractSheetId(targetUrl);
-    if (sheetId) {
-      const fallbackUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
-      const fbRes = await fetch(fallbackUrl);
-      if (fbRes.ok) {
-        const text = await fbRes.text();
-        return parseProductsCsv(text);
+    console.warn('Google Sheets Products közvetlen letöltési figyelmeztetés:', err);
+  }
+
+  // 3. Fallback to local static cache if online sheet unreachable
+  try {
+    const localRes = await fetch('/data/products.csv');
+    if (localRes.ok) {
+      const localCsv = await localRes.text();
+      if (localCsv && localCsv.includes('Termék ID')) {
+        return parseProductsCsv(localCsv);
       }
     }
-    throw err;
+  } catch (localErr) {
+    console.warn('Helyi products.csv nem érhető el:', localErr);
   }
+
+  return [];
 }
 
 /**
@@ -464,7 +506,7 @@ export async function fetchPositionsFromGoogleSheet(sheetUrl?: string): Promise<
   const sheetId = extractSheetId(url);
   if (!sheetId) return [];
 
-  const targetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=Positions`;
+  const targetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&headers=1&sheet=Positions`;
   try {
     const response = await fetch(targetUrl);
     if (!response.ok) return [];
@@ -488,8 +530,7 @@ export async function fetchInventoryFromGoogleSheet(sheetUrl?: string): Promise<
 
   for (const sheetName of trySheets) {
     try {
-      const encodedSheet = encodeURIComponent(sheetName);
-      const targetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodedSheet}`;
+      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
       const response = await fetch(targetUrl);
       if (response.ok) {
         const csvText = await response.text();
@@ -592,8 +633,7 @@ export async function fetchInspectionsFromGoogleSheet(sheetUrl?: string): Promis
 
   for (const sheetName of trySheets) {
     try {
-      const encodedSheet = encodeURIComponent(sheetName);
-      const targetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodedSheet}`;
+      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
       const response = await fetch(targetUrl);
       if (response.ok) {
         const csvText = await response.text();
@@ -732,8 +772,7 @@ export async function fetchKonSarFromGoogleSheet(sheetUrl?: string): Promise<Kon
 
   for (const sheetName of trySheets) {
     try {
-      const encodedSheet = encodeURIComponent(sheetName);
-      const targetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodedSheet}`;
+      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
       const response = await fetch(targetUrl);
       if (response.ok) {
         const csvText = await response.text();
@@ -893,8 +932,7 @@ export async function fetchTermMerodFromGoogleSheet(sheetUrl?: string): Promise<
 
   for (const sheetName of trySheets) {
     try {
-      const encodedSheet = encodeURIComponent(sheetName);
-      const targetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodedSheet}`;
+      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
       const response = await fetch(targetUrl);
       if (response.ok) {
         const csvText = await response.text();
@@ -1115,8 +1153,7 @@ export async function fetchBeepuloFromGoogleSheet(sheetUrl?: string): Promise<Be
 
   for (const sheetName of trySheets) {
     try {
-      const encodedSheet = encodeURIComponent(sheetName);
-      const targetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodedSheet}`;
+      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
       const response = await fetch(targetUrl);
       if (response.ok) {
         const csvText = await response.text();
@@ -1311,8 +1348,7 @@ export async function fetchFejSaruFromGoogleSheet(sheetUrl?: string): Promise<Fe
 
   for (const sheetName of trySheets) {
     try {
-      const encodedSheet = encodeURIComponent(sheetName);
-      const targetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodedSheet}`;
+      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
       const response = await fetch(targetUrl);
       if (response.ok) {
         const csvText = await response.text();
@@ -1632,8 +1668,7 @@ export async function fetchSaruSpecsFromGoogleSheet(sheetUrl?: string): Promise<
 
   for (const sheetName of trySheets) {
     try {
-      const encodedSheet = encodeURIComponent(sheetName);
-      const targetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodedSheet}`;
+      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
       const response = await fetch(targetUrl);
       if (response.ok) {
         const csvText = await response.text();
@@ -2024,8 +2059,7 @@ export async function fetchKanbanFromGoogleSheet(sheetUrl?: string): Promise<Kan
 
   for (const sheetName of trySheets) {
     try {
-      const encodedSheet = encodeURIComponent(sheetName);
-      const targetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodedSheet}`;
+      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
       const response = await fetch(targetUrl);
       if (response.ok) {
         const csvText = await response.text();
@@ -2232,8 +2266,7 @@ export async function fetchOrdersFromGoogleSheet(sheetUrl?: string): Promise<Ord
 
   for (const sheetName of trySheets) {
     try {
-      const encodedSheet = encodeURIComponent(sheetName);
-      const targetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodedSheet}`;
+      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
       const response = await fetch(targetUrl);
       if (response.ok) {
         const csvText = await response.text();
@@ -2250,11 +2283,20 @@ export async function fetchOrdersFromGoogleSheet(sheetUrl?: string): Promise<Ord
   return [];
 }
 
+export interface ExtractedHyperlinks {
+  byNoteId: Map<string, string>;
+  byTermekId: Map<string, string>;
+  byRow: Map<number, string>;
+}
+
 /**
  * Parses raw CSV text into ProductNote array matching Note worksheet columns:
  * Note ID, Termék ID, Név, Leírás, Image, Documents, Date, URL, Név választás
  */
-export function parseNotesCsv(csvText: string, hyperlinksByRow?: Map<number, string>): ProductNote[] {
+export function parseNotesCsv(
+  csvText: string,
+  liveHyperlinks?: ExtractedHyperlinks | Map<number, string>
+): ProductNote[] {
   const parsed = Papa.parse<Record<string, string>>(csvText, {
     header: true,
     skipEmptyLines: true,
@@ -2367,28 +2409,44 @@ export function parseNotesCsv(csvText: string, hyperlinksByRow?: Map<number, str
     }
 
     // Check if the URL is a textual placeholder (such as 'PDF', 'pdf', 'URL', 'KÉP', etc.) or missing
-    const isPlaceholder =
-      !rawUrl ||
-      rawUrl.toLowerCase() === 'pdf' ||
-      rawUrl.toLowerCase() === 'url' ||
-      rawUrl.toLowerCase() === 'kép' ||
-      rawUrl.toLowerCase() === 'kep' ||
-      rawUrl.toLowerCase() === 'vázlatos kép' ||
-      rawUrl.toLowerCase() === 'vazlatos kep' ||
-      rawUrl.toLowerCase() === 'felhelyezés' ||
-      rawUrl.toLowerCase() === 'felhelyezes' ||
-      rawUrl.toLowerCase() === 'link' ||
-      (!rawUrl.startsWith('http') && !rawUrl.startsWith('//') && !rawUrl.includes('/'));
+    const isPlaceholder = isPlaceholderUrl(rawUrl);
 
     let finalUrl = rawUrl;
     if (isPlaceholder) {
-      // Row 1 is header, row index starts at 0 -> Excel row is i + 2
-      const rowNum = i + 2;
-      const liveXlsxUrl = hyperlinksByRow?.get(rowNum);
-      if (liveXlsxUrl) {
-        finalUrl = liveXlsxUrl;
-      } else if (noteId && NOTE_HYPERLINKS_MAP[noteId]) {
-        finalUrl = NOTE_HYPERLINKS_MAP[noteId];
+      // 1. Try live extracted hyperlinks by Note ID
+      if (noteId && liveHyperlinks && 'byNoteId' in liveHyperlinks) {
+        const liveUrl = liveHyperlinks.byNoteId.get(noteId.toLowerCase());
+        if (liveUrl) finalUrl = liveUrl;
+      }
+      // 2. Try live extracted hyperlinks by Termék ID
+      if ((!finalUrl || isPlaceholderUrl(finalUrl)) && termekId && liveHyperlinks && 'byTermekId' in liveHyperlinks) {
+        const liveUrl =
+          liveHyperlinks.byTermekId.get(termekId.toLowerCase()) ||
+          liveHyperlinks.byTermekId.get(getBaseProductId(termekId).toLowerCase());
+        if (liveUrl) finalUrl = liveUrl;
+      }
+      // 3. Fallback to pre-indexed NOTE_HYPERLINKS_MAP by Note ID
+      if ((!finalUrl || isPlaceholderUrl(finalUrl)) && noteId) {
+        const mapUrl = NOTE_HYPERLINKS_MAP[noteId] || NOTE_HYPERLINKS_MAP[noteId.toLowerCase()];
+        if (mapUrl) finalUrl = mapUrl;
+      }
+      // 4. Fallback to pre-indexed NOTE_HYPERLINKS_BY_TERMEK_ID by Termék ID
+      if ((!finalUrl || isPlaceholderUrl(finalUrl)) && termekId) {
+        const mapUrl =
+          NOTE_HYPERLINKS_BY_TERMEK_ID[termekId] ||
+          NOTE_HYPERLINKS_BY_TERMEK_ID[termekId.toLowerCase()] ||
+          NOTE_HYPERLINKS_BY_TERMEK_ID[getBaseProductId(termekId)];
+        if (mapUrl) finalUrl = mapUrl;
+      }
+      // 5. Fallback helper
+      if (!finalUrl || isPlaceholderUrl(finalUrl)) {
+        finalUrl = resolveNoteUrl(noteId, rawUrl, termekId);
+      }
+      // 6. Legacy row-index based lookup
+      if ((!finalUrl || isPlaceholderUrl(finalUrl)) && liveHyperlinks instanceof Map) {
+        const rowNum = i + 2;
+        const legacyUrl = liveHyperlinks.get(rowNum);
+        if (legacyUrl) finalUrl = legacyUrl;
       }
     }
     const url = finalUrl;
@@ -2458,29 +2516,46 @@ export function parseNotesCsv(csvText: string, hyperlinksByRow?: Map<number, str
  * Extracts live formula hyperlinks from the Note worksheet inside the Google Sheets XLSX export.
  * This directly retrieves true Google Drive and web URLs from =HYPERLINK("...", "PDF") formulas
  * that are otherwise stripped into plain display text ("PDF") by the Google Sheets CSV export.
+ * Keyed by Note ID (Column A) and Termék ID (Column B) so rows never drift even if empty rows exist.
  */
-export async function extractHyperlinksFromXlsx(sheetId: string): Promise<Map<number, string>> {
-  const hMap = new Map<number, string>();
+export async function extractHyperlinksFromXlsx(sheetId: string): Promise<ExtractedHyperlinks> {
+  const result: ExtractedHyperlinks = {
+    byNoteId: new Map<string, string>(),
+    byTermekId: new Map<string, string>(),
+    byRow: new Map<number, string>(),
+  };
+
   try {
     const targetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=xlsx`;
     const response = await fetch(targetUrl);
-    if (!response.ok) return hMap;
+    if (!response.ok) return result;
     const arrayBuffer = await response.arrayBuffer();
     const zip = await JSZip.loadAsync(arrayBuffer);
 
+    // Shared strings
+    const sstXml = await zip.file('xl/sharedStrings.xml')?.async('string');
+    const sst: string[] = [];
+    if (sstXml) {
+      const siMatches = [...sstXml.matchAll(/<si>(.*?)<\/si>/gs)];
+      for (const si of siMatches) {
+        const textMatches = [...si[1].matchAll(/<t[^>]*>([^<]*)<\/t>/g)];
+        sst.push(textMatches.map((m) => m[1]).join(''));
+      }
+    }
+
     // Find Note sheet id from workbook.xml
     const wbXml = await zip.file('xl/workbook.xml')?.async('string');
-    if (!wbXml) return hMap;
+    if (!wbXml) return result;
 
     const sheetMatches = [...wbXml.matchAll(/<sheet[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"/g)];
     const noteSheet = sheetMatches.find((s) => /note/i.test(s[1]));
-    if (!noteSheet) return hMap;
+    if (!noteSheet) return result;
     const rId = noteSheet[2];
 
     const relsXml = await zip.file('xl/_rels/workbook.xml.rels')?.async('string');
-    if (!relsXml) return hMap;
+    if (!relsXml) return result;
     const relMatch = relsXml.match(new RegExp(`Id="${rId}"[^>]*Target="([^"]+)"`));
-    if (!relMatch) return hMap;
+    if (!relMatch) return result;
 
     const targetPath = relMatch[1].startsWith('xl/')
       ? relMatch[1]
@@ -2489,41 +2564,82 @@ export async function extractHyperlinksFromXlsx(sheetId: string): Promise<Map<nu
       : `xl/${relMatch[1].replace(/^\//, '')}`;
 
     const sheetXml = await zip.file(targetPath)?.async('string');
-    if (!sheetXml) return hMap;
+    if (!sheetXml) return result;
 
-    // 1. Extract =HYPERLINK("url", "text") cell formulas
-    const hRegex = /<c r="[A-Z]+(\d+)"[^>]*><f>HYPERLINK\(&quot;([^&]+)&quot;,\s*&quot;([^&]*)&quot;\)<\/f>/g;
-    let m;
-    while ((m = hRegex.exec(sheetXml)) !== null) {
-      const row = parseInt(m[1], 10);
-      const u = m[2].replace(/&amp;/g, '&').trim();
-      if (u && !u.startsWith('Higító') && u.length > 5) {
-        hMap.set(row, u);
-      }
-    }
-
-    // 2. Extract standard cell hyperlinks in sheet relationships if any
+    // Extract standard cell hyperlinks in sheet relationships if any
     const sheetRelsPath = targetPath.replace('worksheets/', 'worksheets/_rels/') + '.rels';
     const sheetRelsXml = await zip.file(sheetRelsPath)?.async('string');
+    const relTargets = new Map<string, string>();
     if (sheetRelsXml) {
-      const relTargets = new Map<string, string>();
       const relMatches = [...sheetRelsXml.matchAll(/<Relationship[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"/g)];
       for (const rm of relMatches) {
         relTargets.set(rm[1], rm[2].replace(/&amp;/g, '&'));
       }
-      const cellHlMatches = [...sheetXml.matchAll(/<hyperlink[^>]*ref="[A-Z]+(\d+)"[^>]*r:id="([^"]+)"/g)];
-      for (const chm of cellHlMatches) {
-        const row = parseInt(chm[1], 10);
-        const target = relTargets.get(chm[2]);
-        if (target && !hMap.has(row)) {
-          hMap.set(row, target);
+    }
+    const cellHlMap = new Map<string, string>();
+    const cellHlMatches = [...sheetXml.matchAll(/<hyperlink[^>]*ref="([A-Z]+\d+)"[^>]*r:id="([^"]+)"/g)];
+    for (const chm of cellHlMatches) {
+      const target = relTargets.get(chm[2]);
+      if (target) {
+        cellHlMap.set(chm[1], target);
+      }
+    }
+
+    // Parse each row to extract Note ID (Col A), Termék ID (Col B), and URL (Col H)
+    const rowMatches = [...sheetXml.matchAll(/<row r="(\d+)"[^>]*>(.*?)<\/row>/gs)];
+    for (const rm of rowMatches) {
+      const rowNum = parseInt(rm[1], 10);
+      const rowContent = rm[2];
+
+      // Note ID from col A
+      let noteId = '';
+      const aMatch = rowContent.match(/<c r="A\d+"(?:[^>]*t="([a-z]+)")?[^>]*>(?:<f>.*?<\/f>)?<v>([^<]+)<\/v><\/c>/);
+      if (aMatch) {
+        const isSst = aMatch[1] === 's';
+        const idx = parseInt(aMatch[2], 10);
+        noteId = (isSst && idx < sst.length ? sst[idx] : aMatch[2]).trim();
+      }
+
+      // Termék ID from col B
+      let termekId = '';
+      const bMatch = rowContent.match(/<c r="B\d+"(?:[^>]*t="([a-z]+)")?[^>]*>(?:<f>.*?<\/f>)?<v>([^<]+)<\/v><\/c>/);
+      if (bMatch) {
+        const isSst = bMatch[1] === 's';
+        const idx = parseInt(bMatch[2], 10);
+        termekId = (isSst && idx < sst.length ? sst[idx] : bMatch[2]).trim();
+      }
+
+      // URL from col H (formula, relationship, or cell value)
+      let url = '';
+      const hFormulaMatch = rowContent.match(/<c r="H\d+"[^>]*><f>HYPERLINK\(&quot;([^&]+)&quot;/);
+      if (hFormulaMatch) {
+        url = hFormulaMatch[1].replace(/&amp;/g, '&').trim();
+      }
+      if (!url && cellHlMap.has(`H${rowNum}`)) {
+        url = cellHlMap.get(`H${rowNum}`) || '';
+      }
+      if (!url) {
+        const hValMatch = rowContent.match(/<c r="H\d+"(?:[^>]*t="([a-z]+)")?[^>]*><v>([^<]+)<\/v><\/c>/);
+        if (hValMatch) {
+          const isSst = hValMatch[1] === 's';
+          const idx = parseInt(hValMatch[2], 10);
+          const v = isSst && idx < sst.length ? sst[idx] : hValMatch[2];
+          if (v && v.startsWith('http')) {
+            url = v.trim();
+          }
         }
+      }
+
+      if (url && !url.startsWith('Higító') && url.length > 5) {
+        result.byRow.set(rowNum, url);
+        if (noteId) result.byNoteId.set(noteId.toLowerCase(), url);
+        if (termekId) result.byTermekId.set(termekId.toLowerCase(), url);
       }
     }
   } catch (err) {
     console.warn('XLSX live hyperlink extraction skipped or failed:', err);
   }
-  return hMap;
+  return result;
 }
 
 /**
@@ -2558,7 +2674,11 @@ export async function fetchNotesFromGoogleSheet(sheetUrl?: string): Promise<Prod
   if (!sheetId) return [];
 
   // Start extracting live formula hyperlinks from XLSX in parallel
-  const liveHyperlinksPromise = extractHyperlinksFromXlsx(sheetId).catch(() => new Map<number, string>());
+  const liveHyperlinksPromise = extractHyperlinksFromXlsx(sheetId).catch(() => ({
+    byNoteId: new Map<string, string>(),
+    byTermekId: new Map<string, string>(),
+    byRow: new Map<number, string>(),
+  }));
 
   const trySheets = [
     'Note',
@@ -2574,15 +2694,24 @@ export async function fetchNotesFromGoogleSheet(sheetUrl?: string): Promise<Prod
 
   for (const sheetName of trySheets) {
     try {
-      const encodedSheet = encodeURIComponent(sheetName);
-      const targetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodedSheet}`;
+      const targetUrl = buildGvizCsvUrl(sheetId, sheetName);
       const response = await fetch(targetUrl);
       if (response.ok) {
         const csvText = await response.text();
         // Wait for live hyperlinks with a reasonable timeout so we don't block
         const liveHyperlinks = await Promise.race([
           liveHyperlinksPromise,
-          new Promise<Map<number, string>>((resolve) => setTimeout(() => resolve(new Map()), 2500)),
+          new Promise<ExtractedHyperlinks>((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  byNoteId: new Map(),
+                  byTermekId: new Map(),
+                  byRow: new Map(),
+                }),
+              3500
+            )
+          ),
         ]);
         const records = parseNotesCsv(csvText, liveHyperlinks);
         if (records.length > 0) {

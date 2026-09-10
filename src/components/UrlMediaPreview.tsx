@@ -19,6 +19,7 @@ import {
 export interface UrlMediaPreviewProps {
   url?: string;
   noteId?: string;
+  termekId?: string;
   pageCount?: number;
   title?: string;
   className?: string;
@@ -51,13 +52,13 @@ export function isPlaceholderUrl(val?: string): boolean {
 
 /**
  * Normalizes a URL: trims whitespace, strips quotes/formulas, adds https:// if missing,
- * or resolves using noteId mapping if the URL was exported as a plain placeholder like "PDF".
+ * or resolves using noteId / termekId mapping if the URL was exported as a plain placeholder like "PDF".
  */
-export function normalizeUrl(rawUrl?: string, noteId?: string): string {
-  // If noteId is known and rawUrl is missing or a placeholder, resolve from pre-indexed map
-  if (noteId && (!rawUrl || isPlaceholderUrl(rawUrl))) {
-    const mapped = NOTE_HYPERLINKS_MAP[noteId];
-    if (mapped) return mapped;
+export function normalizeUrl(rawUrl?: string, noteId?: string, termekId?: string): string {
+  // If noteId or termekId is known and rawUrl is missing or a placeholder, resolve from pre-indexed map
+  if (!rawUrl || isPlaceholderUrl(rawUrl)) {
+    const resolved = resolveNoteUrl(noteId, rawUrl, termekId);
+    if (resolved) return resolved;
   }
 
   if (!rawUrl || typeof rawUrl !== 'string') return '';
@@ -76,9 +77,8 @@ export function normalizeUrl(rawUrl?: string, noteId?: string): string {
 
   // If it's still a placeholder (e.g. "PDF", "pdf", "URL")
   if (isPlaceholderUrl(url)) {
-    if (noteId && NOTE_HYPERLINKS_MAP[noteId]) {
-      return NOTE_HYPERLINKS_MAP[noteId];
-    }
+    const resolved = resolveNoteUrl(noteId, url, termekId);
+    if (resolved) return resolved;
     return ''; // Do not turn "PDF" into https://pdf
   }
 
@@ -240,6 +240,7 @@ export function openExternalUrl(url: string, e?: React.SyntheticEvent, noteId?: 
 export const UrlMediaPreview: React.FC<UrlMediaPreviewProps> = ({
   url: rawUrl,
   noteId,
+  termekId,
   pageCount: propPageCount,
   title = 'Melléklet',
   className = '',
@@ -247,7 +248,7 @@ export const UrlMediaPreview: React.FC<UrlMediaPreviewProps> = ({
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
-  const cleanUrl = normalizeUrl(rawUrl, noteId);
+  const cleanUrl = normalizeUrl(rawUrl, noteId, termekId);
   const [imageError, setImageError] = useState(false);
 
   // Dynamic & accurate page count calculation:

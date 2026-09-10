@@ -74,6 +74,9 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
     firebaseError,
     firebaseSyncTime,
     firebaseStats,
+    isQuotaExhausted,
+    retryQuotaConnection,
+    upgradeConsoleUrl,
     migrateToFirebase,
     refreshFromFirebase,
     exportFullBackupJson,
@@ -524,42 +527,98 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
                     <Database className="w-5 h-5" />
                   </div>
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-bold text-stone-900 text-sm">Firebase Firestore Adatbázis</span>
-                      <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                        {isFirebaseConnected ? 'Csatlakozva (Élő felhő)' : 'Inicializálás...'}
-                      </span>
+                      {isQuotaExhausted ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                          Ingyenes kvóta betelt (Helyi mód)
+                        </span>
+                      ) : isFirebaseConnected ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                          Csatlakozva (Élő felhő)
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-stone-100 text-stone-700 border border-stone-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-stone-400" />
+                          Helyi tárhely aktív
+                        </span>
+                      )}
                     </div>
                     <p className="text-stone-500 text-[11px] mt-0.5">
-                      {firebaseSyncTime ? `Legutóbbi szinkronizálás: ${firebaseSyncTime}` : 'Valós idejű szinkronizáció aktív'}
+                      {isQuotaExhausted
+                        ? 'A Firebase Spark csomag napi írási korlátja elérve. Minden adat helyben mentve van és biztonságos.'
+                        : firebaseSyncTime
+                        ? `Legutóbbi szinkronizálás: ${firebaseSyncTime}`
+                        : 'Valós idejű szinkronizáció aktív'}
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 self-end sm:self-center">
-                  <button
-                    type="button"
-                    id="firebase-refresh-btn"
-                    onClick={handleFirebaseRefresh}
-                    disabled={isFirebaseActionLoading || isFirebaseLoading}
-                    className="px-3 py-1.5 rounded-lg border border-stone-300 bg-white hover:bg-stone-50 text-stone-700 font-medium flex items-center gap-1.5 cursor-pointer text-xs disabled:opacity-60 shadow-2xs"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 text-[#006067] ${isFirebaseActionLoading || isFirebaseLoading ? 'animate-spin' : ''}`} />
-                    <span>Újratöltés</span>
-                  </button>
-                  <button
-                    type="button"
-                    id="firebase-migrate-btn"
-                    onClick={handleFirebaseMigrate}
-                    disabled={isFirebaseActionLoading || isFirebaseLoading}
-                    className="px-3 py-1.5 rounded-lg bg-[#006067] hover:bg-[#00474c] text-white font-medium flex items-center gap-1.5 cursor-pointer text-xs disabled:opacity-60 shadow-xs"
-                  >
-                    <Upload className="w-3.5 h-3.5" />
-                    <span>Feltöltés / Mentés</span>
-                  </button>
+                <div className="flex items-center gap-2 self-end sm:self-center flex-wrap">
+                  {isQuotaExhausted ? (
+                    <button
+                      type="button"
+                      id="firebase-quota-retry-btn"
+                      onClick={async () => {
+                        setIsFirebaseActionLoading(true);
+                        try {
+                          await retryQuotaConnection();
+                          setImportResult('Újracsatlakozási kísérlet befejeződött.');
+                        } finally {
+                          setIsFirebaseActionLoading(false);
+                        }
+                      }}
+                      disabled={isFirebaseActionLoading}
+                      className="px-3 py-1.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-medium flex items-center gap-1.5 cursor-pointer text-xs disabled:opacity-60 shadow-2xs"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 text-amber-700 ${isFirebaseActionLoading ? 'animate-spin' : ''}`} />
+                      <span>Kvóta újraellenőrzése</span>
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        id="firebase-refresh-btn"
+                        onClick={handleFirebaseRefresh}
+                        disabled={isFirebaseActionLoading || isFirebaseLoading}
+                        className="px-3 py-1.5 rounded-lg border border-stone-300 bg-white hover:bg-stone-50 text-stone-700 font-medium flex items-center gap-1.5 cursor-pointer text-xs disabled:opacity-60 shadow-2xs"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 text-[#006067] ${isFirebaseActionLoading || isFirebaseLoading ? 'animate-spin' : ''}`} />
+                        <span>Újratöltés</span>
+                      </button>
+                      <button
+                        type="button"
+                        id="firebase-migrate-btn"
+                        onClick={handleFirebaseMigrate}
+                        disabled={isFirebaseActionLoading || isFirebaseLoading}
+                        className="px-3 py-1.5 rounded-lg bg-[#006067] hover:bg-[#00474c] text-white font-medium flex items-center gap-1.5 cursor-pointer text-xs disabled:opacity-60 shadow-xs"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Feltöltés / Mentés</span>
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
+
+              {isQuotaExhausted && (
+                <div className="p-4 rounded-xl bg-amber-50/80 border border-amber-200 text-amber-950 space-y-2">
+                  <div className="flex items-center gap-2 font-bold text-xs text-amber-900">
+                    <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                    <span>Firestore Free Tier (Spark) Napi Írási Limit Elérve</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-amber-900/90">
+                    A Firebase ingyenes csomagjában napi 20 000 ingyenes dokumentum-művelet engedélyezett. 
+                    Amíg a kvóta nem áll vissza (minden nap UTC 00:00-kor, azaz magyar idő szerint éjjel), 
+                    az alkalmazás <strong>automatikus helyi mentéssel (LocalStorage és memória)</strong> működik tovább teljes funkcionalitással. Egyetlen adat sem vész el!
+                  </p>
+                  <p className="text-[11px] text-amber-800">
+                    Ha korlátlan felhő-szinkronizációt szeretne, a Google Cloud / Firebase konzolban bármikor bekapcsolhatja a Blaze (Pay-as-you-go) csomagot.
+                  </p>
+                </div>
+              )}
 
               {/* Collections stats overview */}
               <div>

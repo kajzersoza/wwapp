@@ -83,7 +83,12 @@ import {
   exportOrdersToCsv,
   exportNotesToCsv,
 } from '../services/sheetsService';
-import { resolveNoteUrl, NOTE_HYPERLINKS_MAP, getNotePageCount } from '../data/noteHyperlinksMap';
+import {
+  resolveNoteUrl,
+  NOTE_HYPERLINKS_MAP,
+  NOTE_HYPERLINKS_BY_TERMEK_ID,
+  getNotePageCount,
+} from '../data/noteHyperlinksMap';
 import {
   FIRESTORE_COLLECTIONS,
   FullDataset,
@@ -96,6 +101,9 @@ import {
   clearFirestoreCollection,
   isFirestoreQuotaExhausted,
   setFirestoreQuotaExhausted,
+  markQuotaExhausted,
+  resetQuotaExhausted,
+  getQuotaUpgradeUrl,
   isQuotaError,
 } from '../services/firebaseService';
 
@@ -331,6 +339,9 @@ interface ProductContextType {
   firebaseError: string | null;
   firebaseSyncTime: string | null;
   firebaseStats: Record<string, number>;
+  isQuotaExhausted: boolean;
+  retryQuotaConnection: () => Promise<void>;
+  upgradeConsoleUrl: string;
   migrateToFirebase: () => Promise<{ success: boolean; stats: Record<string, number> }>;
   refreshFromFirebase: () => Promise<void>;
   exportFullBackupJson: () => string;
@@ -421,7 +432,7 @@ const BEEPULO_STORAGE_KEY = 'kinetic_beepulo_cache';
 const FEJSARU_STORAGE_KEY = 'kinetic_fejsaru_cache';
 const SARU_SPECS_STORAGE_KEY = 'kinetic_saruspecs_cache_v8';
 const ORDERS_STORAGE_KEY = 'kinetic_orders_cache_v1';
-const NOTES_STORAGE_KEY = 'kinetic_notes_cache_v1';
+const NOTES_STORAGE_KEY = 'kinetic_notes_cache_v2';
 const SYNC_TIME_KEY = 'kinetic_last_sync_time';
 const SHEET_URL_KEY = 'kinetic_sheet_url';
 
@@ -636,9 +647,17 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
   // Helper to repair/resolve note URLs if they are placeholders like 'PDF' or empty, and ensure accurate pageCount
   const sanitizeNotes = (items: ProductNote[]): ProductNote[] => {
     return items.map((n) => {
-      const resolvedUrl = resolveNoteUrl(n.id, n.url);
+      const canonicalMapUrl = n.id
+        ? NOTE_HYPERLINKS_MAP[n.id] || NOTE_HYPERLINKS_MAP[n.id.toLowerCase()]
+        : undefined;
+      const termekMapUrl = n.termekId
+        ? NOTE_HYPERLINKS_BY_TERMEK_ID[n.termekId] ||
+          NOTE_HYPERLINKS_BY_TERMEK_ID[n.termekId.toLowerCase()] ||
+          NOTE_HYPERLINKS_BY_TERMEK_ID[n.termekId.split('_')[0].split('-')[0].trim()]
+        : undefined;
+      const resolvedUrl = canonicalMapUrl || termekMapUrl || resolveNoteUrl(n.id, n.url, n.termekId);
       const effectiveUrl = resolvedUrl || n.url;
-      const computedPageCount = n.pageCount || getNotePageCount(n.id, effectiveUrl);
+      const computedPageCount = getNotePageCount(n.id, effectiveUrl) || n.pageCount;
       return {
         ...n,
         url: effectiveUrl,
@@ -722,6 +741,7 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [firebaseError, setFirebaseError] = useState<string | null>(null);
   const [firebaseSyncTime, setFirebaseSyncTime] = useState<string | null>(null);
   const [firebaseStats, setFirebaseStats] = useState<Record<string, number>>({});
+  const [isQuotaExhaustedState, setIsQuotaExhaustedState] = useState<boolean>(isFirestoreQuotaExhausted());
 
   const setSheetUrl = (url: string) => {
     setSheetUrlState(url);
@@ -832,6 +852,18 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
     const initFirebase = async () => {
       setIsFirebaseLoading(true);
       setFirebaseError(null);
+
+      // If quota is already exhausted, operate cleanly in local/offline mode without hitting Firestore
+      if (isFirestoreQuotaExhausted()) {
+        setIsQuotaExhaustedState(true);
+        setIsFirebaseConnected(false);
+        setFirebaseError(
+          'A Firebase Firestore ingyenes napi írási kvótája betelt (Quota limit exceeded). A rendszer automatikusan a helyi gyorsítótárat (LocalStorage/Memória) használja, így minden adat és művelet zavartalanul elérhető. A kvóta a következő napon (UTC 00:00) automatikusan visszaáll.'
+        );
+        setIsFirebaseLoading(false);
+        return;
+      }
+
       try {
         // Check if data exists in Firestore
         const cloudData = await downloadAllFromFirestore();
@@ -867,102 +899,81 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
           setIsFirebaseConnected(true);
           setFirebaseSyncTime(new Date().toLocaleTimeString('hu-HU'));
         } else {
-          // If Firestore has no documents yet, only upload if quota is not exhausted
-          if (!isFirestoreQuotaExhausted()) {
-            const initialDataset: FullDataset = {
-              products: rawProducts,
-              positions,
-              inventory,
-              inspections,
-              kanban,
-              konSar,
-              termMerod,
-              beepulo,
-              fejSaru,
-              saruSpecs,
-              orders: orders.length >= 20 ? orders : INITIAL_ORDERS,
-              notes: notes.length > 0 ? notes : INITIAL_NOTES,
-            };
-            const res = await uploadAllToFirestore(initialDataset);
-            if (res.quotaExceeded) {
-              setFirebaseError('A Firebase ingyenes napi írási kvótája betelt. A helyi gyorsítótár és memória aktív.');
-            } else {
-              setFirebaseStats(res.stats);
-            }
-          }
+          // If Firestore has no documents yet, do NOT auto-upload 10,000 documents to avoid exhausting daily quota
           setIsFirebaseConnected(true);
-          setFirebaseSyncTime(new Date().toLocaleTimeString('hu-HU'));
         }
 
-        // Setup real-time subscriptions so any other device/tab or write is instantly reflected
-        unsubs.push(
-          subscribeToCollection<Product>(FIRESTORE_COLLECTIONS.PRODUCTS, (items) => {
-            if (items.length > 0) setRawProducts(items);
-            setIsFirebaseConnected(true);
-          })
-        );
-        unsubs.push(
-          subscribeToCollection<WarehousePosition>(FIRESTORE_COLLECTIONS.POSITIONS, (items) => {
-            if (items.length > 0) setPositions(items);
-          })
-        );
-        unsubs.push(
-          subscribeToCollection<InventoryRecord>(FIRESTORE_COLLECTIONS.INVENTORY, (items) => {
-            if (items.length > 0) setInventory(items);
-          })
-        );
-        unsubs.push(
-          subscribeToCollection<Inspection>(FIRESTORE_COLLECTIONS.INSPECTIONS, (items) => {
-            if (items.length > 0) setInspections(items);
-          })
-        );
-        unsubs.push(
-          subscribeToCollection<KanbanItem>(FIRESTORE_COLLECTIONS.KANBAN, (items) => {
-            if (items.length > 0) setKanban(items);
-          })
-        );
-        unsubs.push(
-          subscribeToCollection<KonSarRelation>(FIRESTORE_COLLECTIONS.KONSAR, (items) => {
-            if (items.length > 0) setKonSar(items);
-          })
-        );
-        unsubs.push(
-          subscribeToCollection<TermMerodRelation>(FIRESTORE_COLLECTIONS.TERMMEROD, (items) => {
-            if (items.length > 0) setTermMerod(items);
-          })
-        );
-        unsubs.push(
-          subscribeToCollection<BeepuloRelation>(FIRESTORE_COLLECTIONS.BEEPULO, (items) => {
-            if (items.length > 0) setBeepulo(items);
-          })
-        );
-        unsubs.push(
-          subscribeToCollection<FejSaruRelation>(FIRESTORE_COLLECTIONS.FEJSARU, (items) => {
-            if (items.length > 0) setFejSaru(items);
-          })
-        );
-        unsubs.push(
-          subscribeToCollection<SaruSpec>(FIRESTORE_COLLECTIONS.SARUSPECS, (items) => {
-            if (items.length > 0) setSaruSpecs(items);
-          })
-        );
-        unsubs.push(
-          subscribeToCollection<Order>(FIRESTORE_COLLECTIONS.ORDERS, (items) => {
-            if (items.length > 0) {
-              const isOldMock = items.some((o) => o.id?.startsWith('REND-2024-00')) || items.length <= 6;
-              if (!isOldMock) {
-                setOrders(items);
+        // Setup real-time subscriptions only if quota is not exhausted
+        if (!isFirestoreQuotaExhausted()) {
+          unsubs.push(
+            subscribeToCollection<Product>(FIRESTORE_COLLECTIONS.PRODUCTS, (items) => {
+              if (items.length > 0) setRawProducts(items);
+              setIsFirebaseConnected(true);
+            })
+          );
+          unsubs.push(
+            subscribeToCollection<WarehousePosition>(FIRESTORE_COLLECTIONS.POSITIONS, (items) => {
+              if (items.length > 0) setPositions(items);
+            })
+          );
+          unsubs.push(
+            subscribeToCollection<InventoryRecord>(FIRESTORE_COLLECTIONS.INVENTORY, (items) => {
+              if (items.length > 0) setInventory(items);
+            })
+          );
+          unsubs.push(
+            subscribeToCollection<Inspection>(FIRESTORE_COLLECTIONS.INSPECTIONS, (items) => {
+              if (items.length > 0) setInspections(items);
+            })
+          );
+          unsubs.push(
+            subscribeToCollection<KanbanItem>(FIRESTORE_COLLECTIONS.KANBAN, (items) => {
+              if (items.length > 0) setKanban(items);
+            })
+          );
+          unsubs.push(
+            subscribeToCollection<KonSarRelation>(FIRESTORE_COLLECTIONS.KONSAR, (items) => {
+              if (items.length > 0) setKonSar(items);
+            })
+          );
+          unsubs.push(
+            subscribeToCollection<TermMerodRelation>(FIRESTORE_COLLECTIONS.TERMMEROD, (items) => {
+              if (items.length > 0) setTermMerod(items);
+            })
+          );
+          unsubs.push(
+            subscribeToCollection<BeepuloRelation>(FIRESTORE_COLLECTIONS.BEEPULO, (items) => {
+              if (items.length > 0) setBeepulo(items);
+            })
+          );
+          unsubs.push(
+            subscribeToCollection<FejSaruRelation>(FIRESTORE_COLLECTIONS.FEJSARU, (items) => {
+              if (items.length > 0) setFejSaru(items);
+            })
+          );
+          unsubs.push(
+            subscribeToCollection<SaruSpec>(FIRESTORE_COLLECTIONS.SARUSPECS, (items) => {
+              if (items.length > 0) setSaruSpecs(items);
+            })
+          );
+          unsubs.push(
+            subscribeToCollection<Order>(FIRESTORE_COLLECTIONS.ORDERS, (items) => {
+              if (items.length > 0) {
+                const isOldMock = items.some((o) => o.id?.startsWith('REND-2024-00')) || items.length <= 6;
+                if (!isOldMock) {
+                  setOrders(items);
+                }
               }
-            }
-          })
-        );
-        unsubs.push(
-          subscribeToCollection<ProductNote>(FIRESTORE_COLLECTIONS.NOTES, (items) => {
-            if (items.length > 0) {
-              setNotes(sanitizeNotes(items));
-            }
-          })
-        );
+            })
+          );
+          unsubs.push(
+            subscribeToCollection<ProductNote>(FIRESTORE_COLLECTIONS.NOTES, (items) => {
+              if (items.length > 0) {
+                setNotes(sanitizeNotes(items));
+              }
+            })
+          );
+        }
 
         // Background check: attempt fetching the latest 28 items directly from Google Sheet if needed
         fetchOrdersFromGoogleSheet(sheetUrl)
@@ -993,7 +1004,9 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
           .catch(() => {});
       } catch (err: unknown) {
         if (isQuotaError(err)) {
-          setFirestoreQuotaExhausted(true);
+          markQuotaExhausted();
+          setIsQuotaExhaustedState(true);
+          setIsFirebaseConnected(false);
           console.warn('[Firebase] Napi ingyenes Firestore kvóta elérve.');
           setFirebaseError('A Firebase ingyenes napi kvótája (20 000 művelet) elérte a határt. Az alkalmazás zavartalanul működik a helyi memóriából és gyorsítótárból.');
         } else {
@@ -1105,12 +1118,20 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         orders: fetchedOrders.length > 0 ? fetchedOrders : orders,
         notes: fetchedNotes.length > 0 ? fetchedNotes : notes,
       };
-      uploadAllToFirestore(dataset)
-        .then((res) => {
-          setFirebaseStats(res.stats);
-          setIsFirebaseConnected(true);
-        })
-        .catch(console.error);
+      if (!isFirestoreQuotaExhausted()) {
+        uploadAllToFirestore(dataset)
+          .then((res) => {
+            if (res.quotaExceeded) {
+              markQuotaExhausted();
+              setIsQuotaExhaustedState(true);
+              setFirebaseError('A Firebase ingyenes napi írási kvótája betelt. A helyi gyorsítótár frissült.');
+            } else {
+              setFirebaseStats(res.stats);
+              setIsFirebaseConnected(true);
+            }
+          })
+          .catch(console.error);
+      }
 
       const now = new Date().toLocaleTimeString('hu-HU', {
         hour: '2-digit',
@@ -1132,6 +1153,13 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
   const migrateToFirebase = async (): Promise<{ success: boolean; stats: Record<string, number> }> => {
     setIsSyncing(true);
     setFirebaseError(null);
+    if (isFirestoreQuotaExhausted()) {
+      setIsQuotaExhaustedState(true);
+      setIsSyncing(false);
+      const errMsg = 'A Firebase ingyenes napi írási kvótája betelt. A mentés Firestore-ba nem lehetséges, a helyi adatok megmaradnak.';
+      setFirebaseError(errMsg);
+      throw new Error(errMsg);
+    }
     try {
       const dataset: FullDataset = {
         products: rawProducts,
@@ -1148,8 +1176,14 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         notes,
       };
       const res = await uploadAllToFirestore(dataset);
-      setFirebaseStats(res.stats);
-      setIsFirebaseConnected(true);
+      if (res.quotaExceeded) {
+        markQuotaExhausted();
+        setIsQuotaExhaustedState(true);
+        setFirebaseError('A feltöltés során a Firebase napi kvótája betelt. A helyi adatok megmaradnak.');
+      } else {
+        setFirebaseStats(res.stats);
+        setIsFirebaseConnected(true);
+      }
       const nowStr = `${new Date().toLocaleDateString('hu-HU')} ${new Date().toLocaleTimeString('hu-HU')}`;
       setFirebaseSyncTime(nowStr);
       return res;
@@ -1160,6 +1194,18 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
       throw err;
     } finally {
       setIsSyncing(false);
+    }
+  };
+
+  const retryQuotaConnection = async (): Promise<void> => {
+    resetQuotaExhausted();
+    setIsQuotaExhaustedState(false);
+    setFirebaseError(null);
+    try {
+      await refreshFromFirebase();
+      setIsFirebaseConnected(true);
+    } catch {
+      setIsQuotaExhaustedState(isFirestoreQuotaExhausted());
     }
   };
 
@@ -1216,6 +1262,10 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const importFullBackupJson = async (jsonStr: string): Promise<{ success: boolean; count: number }> => {
+    if (isFirestoreQuotaExhausted()) {
+      setIsQuotaExhaustedState(true);
+      throw new Error('A Firebase Firestore ingyenes napi kvótája betelt. A biztonsági mentés felhőbe töltése jelenleg nem lehetséges.');
+    }
     try {
       const parsed = JSON.parse(jsonStr);
       const data = (parsed.data || parsed) as Partial<FullDataset>;
@@ -3212,6 +3262,9 @@ export const ProductProvider: React.FC<{ children: ReactNode }> = ({ children })
         firebaseError,
         firebaseSyncTime,
         firebaseStats,
+        isQuotaExhausted: isQuotaExhaustedState,
+        retryQuotaConnection,
+        upgradeConsoleUrl: getQuotaUpgradeUrl(),
         migrateToFirebase,
         refreshFromFirebase,
         exportFullBackupJson,

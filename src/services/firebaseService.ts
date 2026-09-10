@@ -8,6 +8,8 @@ import {
   getDocs,
   onSnapshot,
   writeBatch,
+  disableNetwork,
+  enableNetwork,
   Unsubscribe,
   Firestore,
 } from 'firebase/firestore';
@@ -42,15 +44,87 @@ export const firestoreDb: Firestore = firebaseConfig.firestoreDatabaseId
   ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
   : getFirestore(app);
 
-// In-memory flag tracking if the free daily quota has been exceeded
-let isQuotaExhausted = false;
+// In-memory & persisted flag tracking if the free daily quota has been exceeded
+const QUOTA_STORAGE_KEY = 'kinetic_firestore_quota_exhausted_v2';
+
+function checkInitialQuotaExhausted(): boolean {
+  try {
+    const stored = localStorage.getItem(QUOTA_STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      // Quotas reset daily in Google Cloud (check if recorded within 20 hours)
+      const elapsed = Date.now() - (parsed.timestamp || 0);
+      if (elapsed < 20 * 60 * 60 * 1000) {
+        return true;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
+let isQuotaExhausted = checkInitialQuotaExhausted();
+
+// If quota was already recorded as exhausted, immediately disable network so Firestore SDK stops retrying in the background
+if (isQuotaExhausted) {
+  try {
+    disableNetwork(firestoreDb).catch(() => {});
+  } catch {
+    // ignore
+  }
+}
 
 export function isFirestoreQuotaExhausted(): boolean {
   return isQuotaExhausted;
 }
 
 export function setFirestoreQuotaExhausted(value: boolean): void {
-  isQuotaExhausted = value;
+  if (value) {
+    markQuotaExhausted();
+  } else {
+    resetQuotaExhausted();
+  }
+}
+
+export function markQuotaExhausted(): void {
+  isQuotaExhausted = true;
+  try {
+    localStorage.setItem(
+      QUOTA_STORAGE_KEY,
+      JSON.stringify({
+        timestamp: Date.now(),
+        date: new Date().toISOString(),
+      })
+    );
+  } catch {
+    // ignore
+  }
+  try {
+    disableNetwork(firestoreDb).catch(() => {});
+  } catch {
+    // ignore
+  }
+}
+
+export function resetQuotaExhausted(): void {
+  isQuotaExhausted = false;
+  try {
+    localStorage.removeItem(QUOTA_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+  try {
+    enableNetwork(firestoreDb).catch(() => {});
+  } catch {
+    // ignore
+  }
+}
+
+export function getQuotaUpgradeUrl(): string {
+  const proj = firebaseConfig.projectId || 'dev-antler-505518-m7';
+  const dbId = firebaseConfig.firestoreDatabaseId || '(default)';
+  return `https://console.firebase.google.com/project/${proj}/firestore/databases/${dbId}/data?openUpgradeDialog=true`;
 }
 
 export function isQuotaError(err: any): boolean {
@@ -60,6 +134,8 @@ export function isQuotaError(err: any): boolean {
     str.includes('resource-exhausted') ||
     str.includes('Quota limit exceeded') ||
     str.includes('quota metric') ||
+    str.includes('Free daily write units') ||
+    str.includes('Free daily read units') ||
     err?.code === 'resource-exhausted'
   );
 }
@@ -114,7 +190,7 @@ export async function saveItemToFirestore<T extends { id: string }>(
     await setDoc(docRef, cleanData, { merge: true });
   } catch (err: any) {
     if (isQuotaError(err)) {
-      isQuotaExhausted = true;
+      markQuotaExhausted();
       console.warn(`[Firestore] Napi ingyenes kvóta elérve a(z) ${collectionName} mentése közben. Lokális mentés aktív.`);
       return;
     }
@@ -138,7 +214,7 @@ export async function deleteItemFromFirestore(
     await deleteDoc(docRef);
   } catch (err: any) {
     if (isQuotaError(err)) {
-      isQuotaExhausted = true;
+      markQuotaExhausted();
       console.warn(`[Firestore] Napi ingyenes kvóta elérve a(z) ${collectionName} törlése közben.`);
       return;
     }
@@ -150,13 +226,16 @@ export async function deleteItemFromFirestore(
  * Fetches all documents from a Firestore collection.
  */
 export async function getAllFromFirestore<T>(collectionName: string): Promise<T[]> {
+  if (isQuotaExhausted) {
+    return [];
+  }
   try {
     const colRef = collection(firestoreDb, collectionName);
     const snapshot = await getDocs(colRef);
     return snapshot.docs.map((d) => d.data() as T);
   } catch (err: any) {
     if (isQuotaError(err)) {
-      isQuotaExhausted = true;
+      markQuotaExhausted();
       console.warn(`[Firestore] Napi kvóta elérve a(z) ${collectionName} lekérésekor.`);
       return [];
     }
@@ -173,9 +252,13 @@ export function subscribeToCollection<T extends { id?: string }>(
   onUpdate: (items: T[]) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
+  if (isQuotaExhausted) {
+    return () => {};
+  }
   try {
     const colRef = collection(firestoreDb, collectionName);
-    return onSnapshot(
+    let unsubscribe: Unsubscribe = () => {};
+    unsubscribe = onSnapshot(
       colRef,
       (snapshot) => {
         const items: T[] = snapshot.docs.map((d) => d.data() as T);
@@ -183,7 +266,12 @@ export function subscribeToCollection<T extends { id?: string }>(
       },
       (error) => {
         if (isQuotaError(error)) {
-          isQuotaExhausted = true;
+          markQuotaExhausted();
+          try {
+            unsubscribe();
+          } catch {
+            // ignore
+          }
           console.warn(`[Firestore] Napi kvóta elérve a(z) ${collectionName} valós idejű figyelése közben.`);
         } else {
           console.warn(`[Firestore] Figyelési értesítés (${collectionName}):`, error.message);
@@ -191,7 +279,11 @@ export function subscribeToCollection<T extends { id?: string }>(
         if (onError) onError(error);
       }
     );
+    return unsubscribe;
   } catch (err: any) {
+    if (isQuotaError(err)) {
+      markQuotaExhausted();
+    }
     console.warn(`[Firestore] Nem sikerült feliratkozni a(z) ${collectionName} gyűjteményre:`, err?.message || err);
     return () => {};
   }
@@ -232,7 +324,7 @@ export async function bulkSaveToFirestore<T extends { id: string }>(
       if (onProgress) onProgress(savedCount, items.length);
     } catch (err: any) {
       if (isQuotaError(err)) {
-        isQuotaExhausted = true;
+        markQuotaExhausted();
         console.warn(`[Firestore] Napi ingyenes írási kvóta betelt a(z) ${collectionName} mentésekor.`);
         break;
       }
@@ -272,7 +364,7 @@ export async function clearFirestoreCollection(collectionName: string): Promise<
         deletedCount += chunk.length;
       } catch (err: any) {
         if (isQuotaError(err)) {
-          isQuotaExhausted = true;
+          markQuotaExhausted();
           break;
         }
         throw err;
@@ -282,7 +374,7 @@ export async function clearFirestoreCollection(collectionName: string): Promise<
     return deletedCount;
   } catch (err: any) {
     if (isQuotaError(err)) {
-      isQuotaExhausted = true;
+      markQuotaExhausted();
     }
     return 0;
   }
@@ -386,7 +478,7 @@ export async function uploadAllToFirestore(
           totalRecords: Object.values(stats).reduce((a, b) => a + b, 0),
         }, { merge: true });
       } catch (mErr) {
-        if (isQuotaError(mErr)) isQuotaExhausted = true;
+        if (isQuotaError(mErr)) markQuotaExhausted();
       }
     }
 
@@ -394,7 +486,7 @@ export async function uploadAllToFirestore(
     return { success: !isQuotaExhausted, stats, quotaExceeded: isQuotaExhausted };
   } catch (error: any) {
     if (isQuotaError(error)) {
-      isQuotaExhausted = true;
+      markQuotaExhausted();
       return { success: false, stats, quotaExceeded: true };
     }
     console.warn('Figyelmeztetés az uploadAllToFirestore során:', error?.message || error);
@@ -406,6 +498,23 @@ export async function uploadAllToFirestore(
  * Downloads the complete current database from Firebase Firestore.
  */
 export async function downloadAllFromFirestore(): Promise<FullDataset> {
+  if (isQuotaExhausted) {
+    return {
+      products: [],
+      positions: [],
+      inventory: [],
+      inspections: [],
+      kanban: [],
+      konSar: [],
+      termMerod: [],
+      beepulo: [],
+      fejSaru: [],
+      saruSpecs: [],
+      orders: [],
+      notes: [],
+    };
+  }
+
   const [
     products,
     positions,

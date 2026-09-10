@@ -2290,6 +2290,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                           <UrlMediaPreview
                             url={note.url}
                             noteId={note.id}
+                            termekId={note.termekId}
                             pageCount={note.pageCount}
                             title={note.nev || 'Dokumentum'}
                           />
@@ -2339,6 +2340,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                           <UrlMediaPreview
                             url={note.documents}
                             noteId={note.id}
+                            termekId={note.termekId}
                             pageCount={note.pageCount}
                             title={note.nev || 'Dokumentum'}
                           />

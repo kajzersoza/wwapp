@@ -525,6 +525,7 @@ export const NotesView: React.FC<NotesViewProps> = ({ onOpenSyncModal }) => {
                       <UrlMediaPreview
                         url={note.url}
                         noteId={note.id}
+                        termekId={note.termekId}
                         pageCount={note.pageCount}
                         title={note.nev || 'Csatolmány'}
                       />
@@ -574,6 +575,7 @@ export const NotesView: React.FC<NotesViewProps> = ({ onOpenSyncModal }) => {
                       <UrlMediaPreview
                         url={note.documents}
                         noteId={note.id}
+                        termekId={note.termekId}
                         pageCount={note.pageCount}
                         title={note.nev || 'Dokumentum'}
                       />

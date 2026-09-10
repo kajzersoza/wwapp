@@ -37,6 +37,7 @@ export const Header: React.FC<HeaderProps> = ({
     setActiveTab,
     isFirebaseConnected,
     firebaseSyncTime,
+    isQuotaExhausted,
   } = useProducts();
 
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -185,12 +186,22 @@ export const Header: React.FC<HeaderProps> = ({
             type="button"
             id="firebase-header-status-btn"
             onClick={onOpenSyncModal}
-            className="hidden sm:inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50/70 hover:bg-emerald-100 text-emerald-900 text-xs font-semibold transition-all cursor-pointer min-h-[38px]"
-            title={firebaseSyncTime ? `Firebase Firestore aktív. Utolsó mentés: ${firebaseSyncTime}` : 'Firebase Firestore felhő adatbázis aktív és valós idejű'}
+            className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-2 rounded-lg border text-xs font-semibold transition-all cursor-pointer min-h-[38px] ${
+              isQuotaExhausted
+                ? 'border-amber-300 bg-amber-50/80 hover:bg-amber-100 text-amber-900'
+                : 'border-emerald-200 bg-emerald-50/70 hover:bg-emerald-100 text-emerald-900'
+            }`}
+            title={
+              isQuotaExhausted
+                ? 'Firebase Firestore ingyenes kvóta betelt. Helyi gyorsítótár és memória működik zavartalanul.'
+                : firebaseSyncTime
+                ? `Firebase Firestore aktív. Utolsó mentés: ${firebaseSyncTime}`
+                : 'Firebase Firestore felhő adatbázis aktív és valós idejű'
+            }
           >
-            <Database className="w-3.5 h-3.5 text-emerald-700" />
-            <span className="hidden md:inline">Firebase</span>
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <Database className={`w-3.5 h-3.5 ${isQuotaExhausted ? 'text-amber-700' : 'text-emerald-700'}`} />
+            <span className="hidden md:inline">{isQuotaExhausted ? 'Helyi Mód' : 'Firebase'}</span>
+            <span className={`w-2 h-2 rounded-full ${isQuotaExhausted ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'}`} />
           </button>
 
           {/* Sheets modal trigger */}
